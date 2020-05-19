@@ -1,0 +1,11 @@
+Package: CovidCluster
+Type: Package
+Title: Library for Clustering Sequencing Data with the CovidCovariateCluster algorithm.
+Version: 0.1.0
+Author: Luc Villandr\'{e}
+Maintainer: Luc Villandr\'{e} <luc.villandre@hec.ca>
+Description: Designed specifically for SARS-Cov-2 sequencing data, but usable for any other pathogen. The packages uses MCMC to derive the posterior estimates of different phylogenies. It then produces an optimal partition of the sequences into transmission clusters by scoring all potential partitions in the highest posterior probability phylogenies.
+License: GPL-3
+Depends: R (>= 3.2.0), ape (>= 5.3), phangorn (>= 2.5.5), treedater (>= 0.5.0)
+Encoding: UTF-8
+LazyData: true
