@@ -67,6 +67,7 @@ findBayesianClusters <- function(
     DNAbinData = DNAbinData,
     evoParsList = evoParsList,
     covariateFrame = covariateFrame,
+    mutationRate = mutationRate,
     control = control)
   .clusterFun(MCMCoutput = sampledTreesWithPP, clusterScoringFun = control$clusterScoringFun)
   sampledTreesWithPP
@@ -156,27 +157,33 @@ presetPML <- function(phyloObj, phyDatObj, evoParsList) {
 
 .genStartCoalescenceRates <- function(dualPhyloAndTransTree) {
   transmissionTree <- .convertToTransTree(dualPhyloAndTransTree)
-  tipTimes <- sapply(transmissionTree$tip.label, function(x) x$time)
-  rootTime <- transmissionTree$node.label[[1]]$time
-  maxTimeRange <- max(tipTimes - rootTime) # Rate is in days.
-  numWithinCoalescenceEvents <- sum(sapply(transmissionTree$node.label, function(x) x$coalescenceType == "within")) # REMOVE WITHIN/BETWEEN!
   regionNames <- unique(sapply(transmissionTree$tip.label, '[[', "region"))
-  numRegions <- length(regionNames)
-  startWithin <- rep(numWithinCoalescenceEvents/maxTimeRange, numRegions)
+  getCoalVec <- function(nodeIndex) {
+    basicCoalVec <- rep(0, length(regionNames))
+    names(basicCoalVec) <- regionNames
+    childNodes <- phangorn::Children(transmissionTree, nodeIndex)
+    childRegions <- sapply(childNodes, function(x) .getVertexLabel(transmissionTree, x)$region)
+    if (length(unique(childRegions)) == 1) basicCoalVec[[childRegions[[1]]]] <- 1
+    basicCoalVec
+  }
+  numWithinCoalescenceEvents <- rowSums(sapply(seq_along(transmissionTree$node.label) + ape::Ntip(transmissionTree), getCoalVec))
+
+  startWithin <- numWithinCoalescenceEvents/(sum(transmissionTree$edge.length) * length(regionNames))
   names(startWithin) <- regionNames
-  startBetween <- c(between = numBetweenCoalescenceEvents/maxTimeRange)
-  startValueForOptim <- c(startWithin, startBetween)
+
   funForOptim <- function(x) {
-    names(x) <- c(regionNames, "between") # For some reason, the name attribute of the argument x is stripped when the function is called within lbfgs...
+    names(x) <- regionNames # For some reason, the name attribute of the argument x is stripped when the function is called within lbfgs...
     x <- exp(x)
-    LambdaList <- list(within = head(x, n = -1), between = tail(x, n = 1))
-    returnValue <- .topologyLogPriorFunAndGradient(dualPhyloAndTransTree = dualPhyloAndTransTree, Lambda = LambdaList)
-    return(list("objective" = -returnValue$objective,
-                "gradient" = -c(returnValue$gradient$within[regionNames], returnValue$gradient$between)) ) # lbfgs minimises, hence the "-". Mimicking the syntax in the nloptr vignette.
+    returnValue <- .topologyLogPriorFunAndGradient(dualPhyloAndTransTree = dualPhyloAndTransTree, Lambda = x)
+     # return(list("objective" = -returnValue$objective,
+     #            "gradient" = -returnValue$gradient[regionNames]) ) # lbfgs minimises, hence the "-". Mimicking the syntax in the nloptr vignette. FIX THE GRADIENT-BASED ESTIMATION.
+    -returnValue$objective
   }
 
-  optimResult <- nloptr::lbfgs(x0 = log(startValueForOptim), fn = funForOptim)
-  list(within = exp(head(optimResult$par, n = -1)), between = exp(tail(optimResult$par, n = 1)))
+  optimResult <- nloptr::lbfgs(x0 = log(startWithin), fn = funForOptim)
+  rescaledResults <- exp(optimResult$par)
+  names(rescaledResults) <- regionNames
+  rescaledResults
 }
 
 # This is a constructor-like function for phylo objects.
@@ -210,17 +217,14 @@ phylo <- function(edge, edge.length, tip.label, node.label = NULL) {
       logPriorFun = function(x) .topologyLogPriorFun(dualPhyloAndTransTree = x, Lambda = currentState$paraValues$Lambda),
       transFun = .topologyTransFun),
     b = list(
-      logPriorFun = function(x) .logPhyloBranchLengthsLogPriorFun(dualPhyloAndTransTree = x, mutationRate = mutationRate, numSites = ncol(DNAbinData)),
-      transFun = .logPhyloBranchLengthsTransFun),
+      logPriorFun = function(x) .phyloBranchLengthsLogPriorFun(dualPhyloAndTransTree = x, mutationRate = mutationRate, numSites = ncol(DNAbinData)),
+      transFun = .phyloBranchLengthsTransFun),
     l = list(
       logPriorFun = function(x) .transTreeBranchLengthsLogPrior(dualPhyloAndTransTree = x, mutationRate = mutationRate),
       transFun = .transTreeBranchLengthsTransFun),
-    LambdaWithin = list(
-      logPriorFun = .coalescenceRatesWithinLogPriorFun,
-      transFun = function(x) .coalescenceRatesWithinTransFun(x, sd = MCMCcontrol$withinCoalRateKernelSD)),
-    LambdaBetween = list(
-      logPriorFun = .coalescenceRatesWithinLogPriorFun,
-      transFun = function(x) .coalescenceRatesBetweenTransFun(x, sd = MCMCcontrol$betweenCoalRateKernelSD)))
+    Lambda = list(
+      logPriorFun = .coalescenceRatesLogPriorFun,
+      transFun = function(x) .coalescenceRatesTransFun(x, sd = MCMCcontrol$coalRateKernelSD)))
   currentState$logPrior <- sum(sapply(names(logPriorAndTransFunList), FUN = function(paraName) logPriorAndTransFunList[[paraName]]$logPriorFun(.getCurrentState(currentStateVector = currentState, paraName = paraName))))
 
   currentState$logPP <- startLogLikValue + currentState$logPrior
@@ -246,42 +250,30 @@ phylo <- function(edge, edge.length, tip.label, node.label = NULL) {
     } else {
       stop("Specified a chain ID, but no folder where to find the intermediate results. Remove the chain ID if you want to start the chain from scratch, or specify a value for folderToSaveIntermediateResults in MCMCcontrol. \n")
     }
+  } else {
+    cat("Launching MCMC... \n")
   }
   cat("Chain is called ", MCMCchainRandomId, ". Specify this string in MCMCcontrol if you want to resume simulations. \n", sep = "")
 
   for (MCMCiter in startIterNum:(MCMCcontrol$n + MCMCcontrol$burnin)) {
-    for (paraName in names(startingValues)) {
-      if (paraName == "topology") {
-        valueForCallToTransFun <- currentState$transmissionTree
-      } else if (paraName == "b") {
-        valueForCallToTransFun <- log(currentState$phylogeny$edge.length)
-      } else if (paraName == "l") {
-        valueForCallToTransFun <- log(currentState$transmissionTree$edge.length)
-      } else {
-        valueForCallToTransFun <- log(currentState$paraValues[[paraName]])
-      }
-
-      proposalValueAndTransKernRatio <- logPriorAndTransFunList[[paraName]]$transFun(valueForCallToTransFun)
+    if ((MCMCiter %% MCMCcontrol$print.frequency) == 0) cat("This is MCMC iteration ", MCMCiter, sep = "", ". ")
+    for (paraName in names(logPriorAndTransFunList)) {
+      proposalValueAndTransKernRatio <- logPriorAndTransFunList[[paraName]]$transFun(.getCurrentState(currentState, paraName))
       updatedLogPrior <- logPriorAndTransFunList[[paraName]]$logPriorFun(proposalValueAndTransKernRatio$value)
-      updatedPhylogeny <- currentState$phylogeny
+
+      updatedDualTree <- .getCurrentState(currentState, "topology")
       updatedLogLik <- currentState$logLik
 
-      if (identical(paraName, "topology")) {
-        updatedPhylogeny <- proposalValueAndTransKernRatio$value
-        updatedLogLik <- logLikFun(updatedPhylogeny, phyDatData, currentState$theta)
-      } else if (paraName == "b") {
-        updatedPhylogeny$edge.length <- proposalValueAndTransKernRatio$value
-        updatedLogLik <- logLikFun(updatedPhylogeny, phyDatData, currentState$theta)
-      } else if (paraName == "l") {
-        updatedPhylogeny$node.label <- proposalValueAndTransKernRatio$value
+      if (paraName %in% c("topology", "b")) {
+        updatedDualTree <- proposalValueAndTransKernRatio$value
+        updatedLogLik <- logLikFun(.convertToPhylo(updatedDualTree), phyDatData, evoParsList)
       }
 
       proposalLogPP <- updatedLogLik + updatedLogPrior
       MHratio <- proposalValueAndTransKernRatio$transKernRatio * exp(proposalLogPP - currentState$logPP)
       if (runif(1) <= MHratio) {
         if (paraName %in% c("topology", "l", "b")) {
-          currentState$paraValues$phylogeny <- updatedPhylogeny
-          ## How to merge the topologies of the transmission tree and the phylogeny?
+          currentState$paraValues$phyloAndTransTree <- updatedDualTree
         } else {
           currentState$paraValues[[paraName]] <- proposalValueAndTransKernRatio$value
         }
@@ -292,18 +284,19 @@ phylo <- function(edge, edge.length, tip.label, node.label = NULL) {
     }
     MCMCcontainer[[MCMCiter]] <- currentState
   }
+  cat("MCMC complete. Finalising...")
   stepSize <- ceiling(MCMCcontrol$n * MCMCcontrol$thinning)
   itersToKeep <- seq(from = MCMCcontrol$burnin + stepSize + 1, to = MCMCcontrol$burnin + MCMCcontrol$n, by = stepSize)
   MCMCcontainer[itersToKeep]
 }
 
-MCMC.control <- function(n = 1e6, thinning = 0.1, burnin = 1e4, seed = 24, folderToSaveIntermediateResults = NULL, chainId = NULL, withinCoalRateKernelSD = 0.5, betweenCoalRateKernelSD = 0.5) {
-  list(n = n, thinning = thinning, burnin = burnin, seed = seed, folderToSaveIntermediateResults = folderToSaveIntermediateResults, chainId = chainId, withinCoalRateKernelSD = withinCoalRateKernelSD, betweenCoalRateKernelSD = betweenCoalRateKernelSD)
+MCMC.control <- function(n = 1e6, thinning = 0.1, burnin = 1e4, seed = 24, folderToSaveIntermediateResults = NULL, chainId = NULL, coalRateKernelSD = 0.5, print.frequency = 10) {
+  list(n = n, thinning = thinning, burnin = burnin, seed = seed, folderToSaveIntermediateResults = folderToSaveIntermediateResults, chainId = chainId, coalRateKernelSD = coalRateKernelSD, print.frequency = print.frequency)
 }
 
-.getCurrentState <- function(currentStateVector, paraName = c("topology", "b", "l", "LambdaWithin", "LambdaBetween")) {
-  if (paraName %in% c("topology", "b", "l")) return(currentStateVector$phyloAndTransTree)
-  currentStateVector[[paraName]]
+.getCurrentState <- function(currentStateVector, paraName = c("topology", "b", "l", "Lambda")) {
+  if (paraName %in% c("topology", "b", "l")) return(currentStateVector$paraValues$phyloAndTransTree)
+  currentStateVector$paraValues[[paraName]]
 }
 
 .clusterFun <- function(MCMCoutput, clusterScoringFun) {
@@ -314,8 +307,8 @@ MCMC.control <- function(n = 1e6, thinning = 0.1, burnin = 1e4, seed = 24, folde
 
 }
 
-.topologyTransFun <- function(phylogeny) {
-  list(position = phangorn::rNNI(phylogeny), transKernRatio = 1)
+.topologyTransFun <- function(dualPhyloAndTransTree) {
+  list(value = phangorn::rNNI(dualPhyloAndTransTree), transKernRatio = 1)
 }
 
 .convertToTransTree <- function(dualPhyloAndTransTree) {
@@ -362,9 +355,8 @@ MCMC.control <- function(n = 1e6, thinning = 0.1, burnin = 1e4, seed = 24, folde
   numLineagesPerRegion <- rep(0, numRegions)
   names(numLineagesPerRegion) <- regionNames
   cumulativeLogProb <- 0
-  cumulativeGradientWithin <- rep(0, length(Lambda$within))
-  names(cumulativeGradientWithin) <- names(Lambda$within)
-  cumulativeGradientBetween <- 0
+  cumulativeGradientWithin <- rep(0, length(Lambda))
+  names(cumulativeGradientWithin) <- names(Lambda)
   timeIndices <- as.numeric(factor(sortedPhyloStructCodeFrame$time))
   for (timeIndex in head(unique(timeIndices), n = -1)) {
     rowsConsidered <- which(timeIndices == timeIndex)
@@ -377,8 +369,8 @@ MCMC.control <- function(n = 1e6, thinning = 0.1, burnin = 1e4, seed = 24, folde
       } else {
         childNodeNum <- sortedPhyloStructCodeFrame$vertexNum[rowIndex]
         parentNodeNum <- phangorn::Ancestors(x = transmissionTree, node = childNodeNum, type = "parent")
-        childRegion <- .getVertexLabel(transmissionTree, childNodeNum)
-        parentRegion <- .getVertexLabel(transmissionTree, parentNodeNum)
+        childRegion <- .getVertexLabel(transmissionTree, childNodeNum)$region
+        parentRegion <- .getVertexLabel(transmissionTree, parentNodeNum)$region
         numLineagesPerRegion[[childRegion]] <- numLineagesPerRegion[[childRegion]] + 1
         numLineagesPerRegion[[parentRegion]] <- numLineagesPerRegion[[parentRegion]] + 1
       }
@@ -386,13 +378,13 @@ MCMC.control <- function(n = 1e6, thinning = 0.1, burnin = 1e4, seed = 24, folde
     intervalDuration <- sortedPhyloStructCodeFrame$time[[rowsConsidered[[1]]]] - sortedPhyloStructCodeFrame$time[[rowsConsidered[[1]] + length(rowsConsidered)]]
 
     withinRegionCoalescencePossible <- numLineagesPerRegion > 1
-    withinGradient <- rep(0, length(Lambda$within))
-    names(withinGradient) <- names(Lambda$within)
+    withinGradient <- rep(0, length(Lambda))
+    names(withinGradient) <- names(Lambda)
     cumulWithinRatePerRegion <- sapply(regionNames[withinRegionCoalescencePossible], function(regionName) {
-      choose(numLineagesPerRegion[[regionName]], 2) * Lambda$within[[regionName]] * intervalDuration
+      choose(numLineagesPerRegion[[regionName]], 2) * Lambda[[regionName]] * intervalDuration
     })
     names(cumulWithinRatePerRegion) <- regionNames[withinRegionCoalescencePossible]
-    withinGradient[names(cumulWithinRatePerRegion)] <- -cumulWithinRatePerRegion/Lambda$within[names(cumulWithinRatePerRegion)]
+    withinGradient[names(cumulWithinRatePerRegion)] <- -cumulWithinRatePerRegion/Lambda[names(cumulWithinRatePerRegion)]
     if (length(cumulWithinRatePerRegion) == 0) cumulWithinRatePerRegion <- 0
     totalRate <- sum(cumulWithinRatePerRegion)
     cumulativeLogProb <- cumulativeLogProb - totalRate # That takes into account the exponent of exp(), hence the "-".
@@ -400,11 +392,11 @@ MCMC.control <- function(n = 1e6, thinning = 0.1, burnin = 1e4, seed = 24, folde
 
     if (sortedPhyloStructCodeFrame$type[[rowsConsidered[[1]] + length(rowsConsidered)]] == "C") {
       regionCode <- .getVertexLabel(transmissionTree, sortedPhyloStructCodeFrame$vertexNum[[rowsConsidered[[1]] + length(rowsConsidered)]])$region
-      cumulativeLogProb <- cumulativeLogProb + log(Lambda[[regionCode]])
-      cumulativeGradientWithin[[regionCode]] <- cumulativeGradientWithin[[regionCode]] + 1/Lambda$within[[regionCode]]
+      cumulativeLogProb <- cumulativeLogProb + log(Lambda[[regionCode]] * intervalDuration)
+      cumulativeGradientWithin[[regionCode]] <- cumulativeGradientWithin[[regionCode]] + 1/(Lambda[[regionCode]] * intervalDuration)
     }
   }
-  list(objective = cumulativeLogProb, gradient = list(within = cumulativeGradientWithin, between = cumulativeGradientBetween))
+  list(objective = cumulativeLogProb, gradient = cumulativeGradientWithin)
 }
 
 .topologyLogPriorFun <- function(dualPhyloAndTransTree, Lambda) {
@@ -430,11 +422,20 @@ MCMC.control <- function(n = 1e6, thinning = 0.1, burnin = 1e4, seed = 24, folde
   return(.getNodeLabel(phylogeny, vertexNum))
 }
 
-.logPhyloBranchLengthsTransFun <- function(logBranchLengths) {
+.phyloBranchLengthsTransFun <- function(dualPhyloAndTransTree) {
+  logBranchLengths <- log(sapply(dualPhyloAndTransTree$edge.length, FUN = '[[', "phylogeny"))
+  nonZeroLengthBranchPos <- which(!is.infinite(logBranchLengths))
   transKernSD <- 1
-  newPos <- rnorm(n = length(logBranchLengths), mean = logBranchLengths, sd = transKernSD)
-  logTransKernRatio <- sum(dnorm(x = logBranchLengths, mean = log(newPos), sd = transKernSD, log = TRUE) - dnorm(x = newPos, mean = logBranchLengths, sd = transKernSD, log = TRUE))
-  list(position = newPos, transKernRatio = exp(logTransKernRatio))
+  newPos <- logBranchLengths
+  newPos[nonZeroLengthBranchPos] <- rnorm(n = length(nonZeroLengthBranchPos), mean = logBranchLengths[nonZeroLengthBranchPos], sd = transKernSD)
+  logTransKernRatio <- sum(dnorm(x = logBranchLengths[nonZeroLengthBranchPos], mean = newPos[nonZeroLengthBranchPos], sd = transKernSD, log = TRUE) - dnorm(x = newPos[nonZeroLengthBranchPos], mean = logBranchLengths[nonZeroLengthBranchPos], sd = transKernSD, log = TRUE))
+  dualPhyloAndTransTree$edge.length <- lapply(seq_along(dualPhyloAndTransTree$edge.length), function(edgeIndex) {
+    edgeElement <- dualPhyloAndTransTree$edge.length[[edgeIndex]]
+    edgeElement$phylogeny <- exp(newPos[[edgeIndex]])
+    edgeElement
+  })
+
+  list(value = dualPhyloAndTransTree, transKernRatio = exp(logTransKernRatio))
 }
 
 # .getEvoParsLogPriorsFunList <- function() {
@@ -457,7 +458,7 @@ MCMC.control <- function(n = 1e6, thinning = 0.1, burnin = 1e4, seed = 24, folde
   K80transversionTransFun <- K80transitionTransFun <- function(currentValue) {
     newPos <- exp(rnorm(n = 1, mean = log(currentValue), sd = 0.01))
     transKernRatio <- dnorm(x = log(currentValue), mean = log(newPos), sd = 0.01)/dnorm(x = log(newPos), mean = log(currentValue), sd = 0.01)
-    list(position = newPos,
+    list(value = newPos,
          transKernRatio = transKernRatio)
   }
   propInvTransFun <- function(x) {
@@ -469,14 +470,14 @@ MCMC.control <- function(n = 1e6, thinning = 0.1, burnin = 1e4, seed = 24, folde
   list(K80transitionTransFun, K80transversionTransFun, propInvTransFun, gammaShapeTransFun)
 }
 
-# .logPhyloBranchLengthsLogPriorFun <- function(dualPhyloAndTransTree) {
+# .phyloBranchLengthsLogPriorFun <- function(dualPhyloAndTransTree) {
 #   branchLengths <- sapply(dualPhyloAndTransTree$edge.length, '$', "phylogeny")
 #   dnorm(x = log(branchLengths), mean = -7, sd = 5, log = TRUE)
 # }
 
-.logPhyloBranchLengthsLogPriorFun <- function(dualPhyloAndTransTree, mutationRate, numSites) {
-  branchLengths <- sapply(dualPhyloAndTransTree$edge.length, '$', "phylogeny")
-  transTreeBranchLengths <- sapply(dualPhyloAndTransTree$edge.length, '$', "transmissionTree")
+.phyloBranchLengthsLogPriorFun <- function(dualPhyloAndTransTree, mutationRate, numSites) {
+  branchLengths <- sapply(dualPhyloAndTransTree$edge.length, '[[', "phylogeny")
+  transTreeBranchLengths <- sapply(dualPhyloAndTransTree$edge.length, '[[', "transmissionTree")
   sum(dpois(x = floor(branchLengths * numSites), lambda = mutationRate * transTreeBranchLengths, log = TRUE))
 }
 
@@ -575,33 +576,52 @@ MCMC.control <- function(n = 1e6, thinning = 0.1, burnin = 1e4, seed = 24, folde
   return(1)
 }
 
-.transTreeBranchLengthsTransFun <- function(currentState) {
-  logNewState <- rnorm(n = length(currentState), mean = log(currentState), sd = 0.5)
-  logProbWeightNewState <- sum(dnorm(logNewState, mean = logNewState, sd = 0.5, log = TRUE))
-  inverseLogProbWeightNewState <- sum(dnorm(log(currentState), mean = logNewState, sd = 0.5, log = TRUE))
-  list(position = exp(logNewState), transKernRatio = exp(sum(inverseLogProbWeightNewState - logProbWeightNewState)))
+# Might not guarantee that all branches in the transmission tree have positive length...
+.transTreeBranchLengthsTransFun <- function(dualPhyloAndTransTree) {
+  nodeTimes <- .getVertexTimes(dualPhyloAndTransTree, type = "node")
+  transKernSD <- 0.1
+  updatedNodeTimes <- rnorm(length(nodeTimes), mean = nodeTimes, sd = transKernSD)
+  dualPhyloAndTransTree$node.label <- lapply(seq_along(dualPhyloAndTransTree$node.label), function(nodeIndex) {
+    updatedNode <- dualPhyloAndTransTree$node.label[[nodeIndex]]
+    updatedNode$time <- updatedNodeTimes[[nodeIndex]]
+    updatedNode
+  })
+  updatedTransTreeEdges <- .deriveTransTreeEdgeLengths(dualPhyloAndTransTree)
+  dualPhyloAndTransTree$edge.length <- lapply(seq_along(dualPhyloAndTransTree$edge.length), function(edgeIndex) {
+    updatedEdgeLength <- dualPhyloAndTransTree$edge.length[[edgeIndex]]
+    updatedEdgeLength$transmissionTree <- updatedTransTreeEdges[[edgeIndex]]
+    updatedEdgeLength
+  })
+
+  list(value = dualPhyloAndTransTree, transKernRatio = 1) # The normal transition kernel is symmetrical.
 }
 
-.coalescenceRatesWithinLogPriorFun <- function(withinRates) {
+.deriveTransTreeEdgeLengths <- function(dualPhyloAndTransTree) {
+  childNodeNumbers <- dualPhyloAndTransTree$edge[ , 2]
+  parentNodeNumbers <- dualPhyloAndTransTree$edge[ , 1]
+  abs(sapply(childNodeNumbers, function(x) .getVertexLabel(phylogeny = dualPhyloAndTransTree, vertexNum = x)$time) - sapply(parentNodeNumbers, function(x) .getVertexLabel(phylogeny = dualPhyloAndTransTree, vertexNum = x)$time))
+}
+
+.getVertexTimes <- function(dualPhyloAndTransTree, type = c("all", "nodes", "tips")) {
+  type <- type[[1]]
+  labelList <- dualPhyloAndTransTree$tip.label
+  if (type == "all") {
+    labelList <- c(dualPhyloAndTransTree$tip.label, dualPhyloAndTransTree$node.label)
+  } else if (type == "nodes") {
+    labelList <- labelList$node.label
+  }
+  sapply(labelList, "[[", "time")
+}
+
+.coalescenceRatesLogPriorFun <- function(rates) {
   return(0)
 }
 
-.coalescenceRatesWithinTransFun <- function(currentState, sd) {
+.coalescenceRatesTransFun <- function(currentState, sd) {
   logNewState <- rnorm(n = length(currentState), mean = log(currentState), sd = sd)
   logProbWeightNewState <- sum(dnorm(logNewState, mean = logNewState, sd = sd, log = TRUE))
   inverseLogProbWeightNewState <- sum(dnorm(log(currentState), mean = logNewState, sd = sd, log = TRUE))
-  list(position = exp(logNewState), transKernRatio = exp(sum(inverseLogProbWeightNewState - logProbWeightNewState)))
-}
-
-.coalescenceRatesBetweenLogPriorFun <- function(betweenRate) {
-  return(0)
-}
-
-.coalescenceRatesBetweenTransFun <- function(currentState, sd) {
-  logNewState <- rnorm(n = length(currentState), mean = log(currentState), sd = sd)
-  logProbWeightNewState <- sum(dnorm(logNewState, mean = logNewState, sd = sd, log = TRUE))
-  inverseLogProbWeightNewState <- sum(dnorm(log(currentState), mean = logNewState, sd = sd, log = TRUE))
-  list(position = exp(logNewState), transKernRatio = exp(sum(inverseLogProbWeightNewState - logProbWeightNewState)))
+  list(value = exp(logNewState), transKernRatio = exp(sum(inverseLogProbWeightNewState - logProbWeightNewState)))
 }
 
 plotTransmissionTree <- function(dualPhyloAndTransmissionTree, device = jpeg, filename, argsForDevice = list(), argsForPlotPhylo = list(show.tip.label = TRUE, edge.width = 2)) {
