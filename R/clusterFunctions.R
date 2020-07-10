@@ -41,8 +41,8 @@ findBayesianClusters <- function(
   control = list()) {
   # .performBasicChecks()
 
-  if (is.null(control$migrationPriorMean)) {
-    control$migrationPriorMean <- length(unique(seqsRegionStamps)) - 1 # We prefer transmission trees with only one introduction per region; the -1 is for the outgroup, which starts off with a region without an introduction.
+  if (is.null(control$numMigrationsPoissonPriorMean)) {
+    control$numMigrationsPoissonPriorMean <- length(unique(seqsRegionStamps)) - 1 # We prefer transmission trees with only one introduction per region; the -1 is for the outgroup, which starts off with a region without an introduction.
   }
 
   control <- do.call('.defineBayesianClustersControl', control)
@@ -56,10 +56,10 @@ findBayesianClusters <- function(
   startingValues <- list()
 
   # The "edge.length" component of "phylogeny" is a list containing branch lengths for both the transmission tree and phylogeny.
-  #
+
   startingValues$phyloAndTransTree <- .genStartDualPhyloAndTransTree(phylogeny = startingValuePhylo, seqsTimestampsPOSIXct = seqsTimestampsPOSIXct, seqsRegionStamps = seqsRegionStamps, mutationRate = mutationRate, control = control$controlForGenStartTransmissionTree)
 
-  startingValues$Lambda <- .genStartCoalescenceRates(startingValues$phyloAndTransTree)
+  startingValues$Lambda <- .genStartCoalescenceRates(startingValues$phyloAndTransTree, control = control)
 
   sampledTreesWithPP <- .optimTreeMCMC(
     startingValues = startingValues,
@@ -79,10 +79,10 @@ findBayesianClusters <- function(
 
 .defineBayesianClustersControl <- function(
   logLikFun = presetPML,
-  migrationPriorMean,
+  numMigrationsPoissonPriorMean = 1,
   MCMC.control = MCMC.control(),
   controlForGenStartTransmissionTree = .controlForGenStartTransmissionTree()) {
-  list(logLikFun = logLikFun, migrationPriorMean = migrationPriorMean, MCMC.control = do.call("MCMC.control", MCMC.control), controlForGenStartTransmissionTree = do.call(".controlForGenStartTransmissionTree", controlForGenStartTransmissionTree))
+  list(logLikFun = logLikFun, numMigrationsPoissonPriorMean = numMigrationsPoissonPriorMean, MCMC.control = do.call("MCMC.control", MCMC.control), controlForGenStartTransmissionTree = do.call(".controlForGenStartTransmissionTree", controlForGenStartTransmissionTree))
 }
 
 # evoParsList is a list of varying parameters for the log-likelihood model. Control parameters are hard-coded.
@@ -155,7 +155,7 @@ presetPML <- function(phyloObj, phyDatObj, evoParsList) {
   transmissionTree
 }
 
-.genStartCoalescenceRates <- function(dualPhyloAndTransTree) {
+.genStartCoalescenceRates <- function(dualPhyloAndTransTree, control) {
   transmissionTree <- .convertToTransTree(dualPhyloAndTransTree)
   regionNames <- unique(sapply(transmissionTree$tip.label, '[[', "region"))
   getCoalVec <- function(nodeIndex) {
@@ -174,7 +174,7 @@ presetPML <- function(phyloObj, phyDatObj, evoParsList) {
   funForOptim <- function(x) {
     names(x) <- regionNames # For some reason, the name attribute of the argument x is stripped when the function is called within lbfgs...
     x <- exp(x)
-    returnValue <- .topologyLogPriorFunAndGradient(dualPhyloAndTransTree = dualPhyloAndTransTree, Lambda = x)
+    returnValue <- .topologyLogPriorFunAndGradient(dualPhyloAndTransTree = dualPhyloAndTransTree, Lambda = x, numMigrationsPoissonPriorMean = control$numMigrationsPoissonPriorMean)
      # return(list("objective" = -returnValue$objective,
      #            "gradient" = -returnValue$gradient[regionNames]) ) # lbfgs minimises, hence the "-". Mimicking the syntax in the nloptr vignette. FIX THE GRADIENT-BASED ESTIMATION.
     -returnValue$objective
@@ -207,18 +207,18 @@ phylo <- function(edge, edge.length, tip.label, node.label = NULL) {
   phyloObj <- .convertToPhylo(startingValues$phyloAndTransTree)
   startLogLikValue <- logLikFun(phyloObj, phyDatData, evoParsList)
 
-  MCMCcontainer <- vector(mode = "list", length = MCMCcontrol$n + MCMCcontrol$burnin)
+  MCMCcontainer <- vector(mode = "list", length = floor((MCMCcontrol$n + MCMCcontrol$burnin)/MCMCcontrol$stepSize))
 
   currentState <- list(paraValues = startingValues, logLik = startLogLikValue)
 
   # Functions are defined here with an external dependence on currentState, but this is voluntary.
   logPriorAndTransFunList <- list(
     topology = list(
-      logPriorFun = function(x, Lambda = currentState$paraValues$Lambda) .topologyLogPriorFun(dualPhyloAndTransTree = x, Lambda = Lambda),
+      logPriorFun = function(x, Lambda = currentState$paraValues$Lambda) .topologyLogPriorFun(dualPhyloAndTransTree = x, Lambda = Lambda, numMigrationsPoissonPriorMean = control$numMigrationsPoissonPriorMean),
       transFun = .topologyTransFun),
     b = list(
       logPriorFun = function(x) .phyloBranchLengthsLogPriorFun(dualPhyloAndTransTree = x, mutationRate = mutationRate, numSites = ncol(DNAbinData)),
-      transFun = .phyloBranchLengthsTransFun),
+      transFun = function(x) .phyloBranchLengthsTransFun(x, deflateCoef = MCMCcontrol$phyloBranchLengthsDeflateCoef)),
     l = list(
       logPriorFun = function(x) .transTreeBranchLengthsLogPrior(dualPhyloAndTransTree = x, mutationRate = mutationRate),
       transFun = .transTreeBranchLengthsTransFun),
@@ -241,11 +241,11 @@ phylo <- function(edge, edge.length, tip.label, node.label = NULL) {
         stop("Specified chain ID, but couldn't find associated files in folderToSaveIntermediateResults. Make sure chainID is correctly specified, or remove chain ID if you want to start the chain from scratch.")
       }
       filesToRestoreOrder <- order(as.numeric(stringr::str_extract(filesToRestore, "[:digit:]+(?=.Rdata)")))
-      MCMCcontainer <- c(lapply(filesToRestore[filesToRestoreOrder], function(filename) {
+      MCMCcontainer[1:length(filesToRestore)] <- do.call("c", lapply(filesToRestore[filesToRestoreOrder], function(filename) {
         loadName <- load(filename)
         get(loadName)
       }))
-      startIterNum <- length(MCMCcontainer) + 1
+      startIterNum <- length(MCMCcontainer) * MCMCcontrol$stepSize + 1
       MCMCchainRandomId <- MCMCcontrol$chainId
       cat("Resuming MCMC at iteration ", startIterNum, ". \n", sep = "")
     } else {
@@ -260,8 +260,10 @@ phylo <- function(edge, edge.length, tip.label, node.label = NULL) {
   cat("Starting value for log-lik.: \n")
   print(currentState$logLik)
   for (MCMCiter in startIterNum:(MCMCcontrol$n + MCMCcontrol$burnin)) {
-    if ((MCMCiter %% MCMCcontrol$print.frequency) == 0) cat("This is MCMC iteration ", MCMCiter, sep = "", ".\n")
+    # if ((MCMCiter %% MCMCcontrol$print.frequency) == 0) cat("This is MCMC iteration ", MCMCiter, sep = "", ".\n")
+    cat("This is MCMC iteration ", MCMCiter, sep = "", ".\n")
     for (paraName in names(logPriorAndTransFunList)) {
+      cat("Processing param. ", paraName, ".\n", sep = "")
       proposalValueAndTransKernRatio <- logPriorAndTransFunList[[paraName]]$transFun(.getCurrentState(currentState, paraName))
       updatedLogPrior <- currentState$logPrior
       updatedLogPrior[[paraName]] <- logPriorAndTransFunList[[paraName]]$logPriorFun(proposalValueAndTransKernRatio$value)
@@ -296,19 +298,20 @@ phylo <- function(edge, edge.length, tip.label, node.label = NULL) {
         currentState$logPP <- proposalLogPP
       }
     }
-    MCMCcontainer[[MCMCiter]] <- currentState
-    if ((MCMCiter %% MCMCcontrol$save.frequency) == 0) {
-      subMCMCcontainer <- MCMCcontainer[(MCMCiter - MCMCcontrol$save.frequency + 1):MCMCiter]
-      save(subMCMCcontainer, file = paste(MCMCcontrol$folderToSaveIntermediateResults, "/chainID_", MCMCchainRandomId, "_atIter", MCMCiter, ".Rdata", sep = ""), compress = TRUE)
+    if ((MCMCiter %% MCMCcontrol$stepSize) == 0) {
+      MCMCcontainer[[MCMCiter/MCMCcontrol$stepSize]] <- currentState
+      save(currentState, file = paste(MCMCcontrol$folderToSaveIntermediateResults, "/chainID_", MCMCchainRandomId, "_atIter", MCMCiter, ".Rdata", sep = ""), compress = TRUE)
     }
   }
   cat("MCMC complete. Finalising... \n")
-  itersToKeep <- seq(from = MCMCcontrol$burnin + MCMCcontrol$stepSize, to = MCMCcontrol$burnin + MCMCcontrol$n, by = MCMCcontrol$stepSize)
-  MCMCcontainer[itersToKeep]
+  elementsToKeep <- seq(
+    from = floor(MCMCcontrol$burnin/MCMCcontrol$stepSize) + 1,
+    to = floor((MCMCcontrol$burnin + MCMCcontrol$n)/MCMCcontrol$stepSize))
+  MCMCcontainer[elementsToKeep]
 }
 
-MCMC.control <- function(n = 1e6, stepSize = 50, burnin = 1e4, seed = 24, folderToSaveIntermediateResults = NULL, save.frequency = 100, chainId = NULL, coalRateKernelSD = 0.5, print.frequency = 10) {
-  list(n = n, stepSize = stepSize, burnin = burnin, seed = seed, folderToSaveIntermediateResults = folderToSaveIntermediateResults, chainId = chainId, coalRateKernelSD = coalRateKernelSD, print.frequency = print.frequency, save.frequency = save.frequency)
+MCMC.control <- function(n = 1e6, stepSize = 50, burnin = 1e4, seed = 24, folderToSaveIntermediateResults = NULL, save.frequency = 100, chainId = NULL, coalRateKernelSD = 0.5, print.frequency = 10, phyloBranchLengthsDeflateCoef = 0.98) {
+  list(n = n, stepSize = stepSize, burnin = burnin, seed = seed, folderToSaveIntermediateResults = folderToSaveIntermediateResults, chainId = chainId, coalRateKernelSD = coalRateKernelSD, print.frequency = print.frequency, save.frequency = save.frequency, phyloBranchLengthsDeflateCoef = phyloBranchLengthsDeflateCoef)
 }
 
 .getCurrentState <- function(currentStateVector, paraName = c("topology", "b", "l", "Lambda")) {
@@ -342,6 +345,11 @@ MCMC.control <- function(n = 1e6, stepSize = 50, burnin = 1e4, seed = 24, folder
     edgeLengthList$transmissionTree <- newEdgeLengths[[edgeIndex]]
     edgeLengthList
   })
+
+  # A change in the topology can affect node region assignment.
+  proposedMove <- .clearNodeRegions(proposedMove)
+  proposedMove <- .identifyNodeRegions(proposedMove)
+
   list(value = proposedMove, transKernRatio = 1)
 }
 
@@ -359,7 +367,7 @@ MCMC.control <- function(n = 1e6, stepSize = 50, burnin = 1e4, seed = 24, folder
   phylogeny
 }
 
-.topologyLogPriorFunAndGradient <- function(dualPhyloAndTransTree, Lambda) {
+.topologyLogPriorFunAndGradient <- function(dualPhyloAndTransTree, Lambda, numMigrationsPoissonPriorMean = 1) {
   transmissionTree <- .convertToTransTree(dualPhyloAndTransTree)
   nodeTimes <- sapply(transmissionTree$node.label, function(nodeLabel) nodeLabel$time)
   tipTimes <- sapply(transmissionTree$tip.label, function(tipLabel) tipLabel$time)
@@ -430,11 +438,19 @@ MCMC.control <- function(n = 1e6, stepSize = 50, burnin = 1e4, seed = 24, folder
       cumulativeGradientWithin[[regionCode]] <- cumulativeGradientWithin[[regionCode]] + 1/(Lambda[[regionCode]] * intervalDuration)
     }
   }
-  list(objective = cumulativeLogProb, gradient = cumulativeGradientWithin)
+  getMigrationIndicator <- function(vertexIndex) {
+    vertexLabel <- .getVertexLabel(dualPhyloAndTransTree, vertexIndex)
+    currentRegion <- vertexLabel$region
+    parentIndex <- phangorn::Ancestors(dualPhyloAndTransTree, vertexIndex, "parent")
+    parentRegion <- .getVertexLabel(dualPhyloAndTransTree, parentIndex)$region
+    parentRegion != currentRegion
+  }
+  numMigrations <- sum(sapply(c(1:ape::Ntip(dualPhyloAndTransTree), (ape::Ntip(dualPhyloAndTransTree) + 2):(ape::Ntip(dualPhyloAndTransTree) + ape::Nnode(dualPhyloAndTransTree))), FUN = getMigrationIndicator))
+  list(objective = cumulativeLogProb + .numMigrationsLogPriorFunWithMeanPar(x = numMigrations, meanPar = numMigrationsPoissonPriorMean), gradient = cumulativeGradientWithin)
 }
 
-.topologyLogPriorFun <- function(dualPhyloAndTransTree, Lambda) {
-  .topologyLogPriorFunAndGradient(dualPhyloAndTransTree, Lambda)$objective
+.topologyLogPriorFun <- function(dualPhyloAndTransTree, Lambda, numMigrationsPoissonPriorMean) {
+  .topologyLogPriorFunAndGradient(dualPhyloAndTransTree, Lambda, numMigrationsPoissonPriorMean)$objective
 }
 
 .getNodeLabel <- function(phylogeny, nodeNum) {
@@ -445,8 +461,8 @@ MCMC.control <- function(n = 1e6, stepSize = 50, burnin = 1e4, seed = 24, folder
   phylogeny$tip.label[[tipNum]]
 }
 
-.numMigrationsLogPriorFunWithMeanPar <- function(x, meanPar) {
-  dpois(x = x, lambda = 1/meanPar, log = TRUE)
+.numMigrationsLogPriorFunWithMeanPar <- function(x, meanPar = 1) {
+  dpois(x = x, lambda = meanPar, log = TRUE)
 }
 
 .getVertexLabel <- function(phylogeny, vertexNum) {
@@ -456,20 +472,22 @@ MCMC.control <- function(n = 1e6, stepSize = 50, burnin = 1e4, seed = 24, folder
   return(.getNodeLabel(phylogeny, vertexNum))
 }
 
-.phyloBranchLengthsTransFun <- function(dualPhyloAndTransTree) {
+.phyloBranchLengthsTransFun <- function(dualPhyloAndTransTree, deflateCoef = 0.98) {
   logBranchLengths <- log(sapply(dualPhyloAndTransTree$edge.length, FUN = '[[', "phylogeny"))
   nonZeroLengthBranchPos <- which(!is.infinite(logBranchLengths))
-  transKernSD <- 1
+  # transKernSD <- 1
+  modCoef <- c(deflateCoef, 1/deflateCoef)
   newPos <- logBranchLengths
-  newPos[nonZeroLengthBranchPos] <- rnorm(n = length(nonZeroLengthBranchPos), mean = logBranchLengths[nonZeroLengthBranchPos], sd = transKernSD)
-  logTransKernRatio <- sum(dnorm(x = logBranchLengths[nonZeroLengthBranchPos], mean = newPos[nonZeroLengthBranchPos], sd = transKernSD, log = TRUE) - dnorm(x = newPos[nonZeroLengthBranchPos], mean = logBranchLengths[nonZeroLengthBranchPos], sd = transKernSD, log = TRUE))
+  #newPos[nonZeroLengthBranchPos] <- rnorm(n = length(nonZeroLengthBranchPos), mean = logBranchLengths[nonZeroLengthBranchPos], sd = transKernSD)
+  newPos[nonZeroLengthBranchPos] <- sample(x = modCoef, size = length(nonZeroLengthBranchPos), replace = TRUE) * newPos[nonZeroLengthBranchPos]
+  # logTransKernRatio <- sum(dnorm(x = logBranchLengths[nonZeroLengthBranchPos], mean = newPos[nonZeroLengthBranchPos], sd = transKernSD, log = TRUE) - dnorm(x = newPos[nonZeroLengthBranchPos], mean = logBranchLengths[nonZeroLengthBranchPos], sd = transKernSD, log = TRUE))
   dualPhyloAndTransTree$edge.length <- lapply(seq_along(dualPhyloAndTransTree$edge.length), function(edgeIndex) {
     edgeElement <- dualPhyloAndTransTree$edge.length[[edgeIndex]]
     edgeElement$phylogeny <- exp(newPos[[edgeIndex]])
     edgeElement
   })
 
-  list(value = dualPhyloAndTransTree, transKernRatio = exp(logTransKernRatio))
+  list(value = dualPhyloAndTransTree, transKernRatio = 1)
 }
 
 # .getEvoParsLogPriorsFunList <- function() {
@@ -599,6 +617,14 @@ MCMC.control <- function(n = 1e6, stepSize = 50, burnin = 1e4, seed = 24, folder
 
   transmissionTree$node.label <- lapply(seq_along(transmissionTree$node.label), FUN = addCoalescenceType)
   transmissionTree
+}
+
+.clearNodeRegions <- function(dualPhyloAndTransTree) {
+  dualPhyloAndTransTree$node.label <- lapply(dualPhyloAndTransTree$node.label, function(nodeLabel) {
+    nodeLabel$region <- NA
+    nodeLabel
+  })
+  dualPhyloAndTransTree
 }
 
 .transTreeBranchLengthsLogPrior <- function(dualPhyloAndTransTree, mutationRate) {
