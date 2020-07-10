@@ -69,7 +69,7 @@ findBayesianClusters <- function(
     covariateFrame = covariateFrame,
     mutationRate = mutationRate,
     control = control)
-  .clusterFun(MCMCoutput = sampledTreesWithPP, clusterScoringFun = control$clusterScoringFun)
+  # .clusterFun(MCMCoutput = sampledTreesWithPP, clusterScoringFun = control$clusterScoringFun)
   sampledTreesWithPP
 }
 
@@ -236,17 +236,14 @@ phylo <- function(edge, edge.length, tip.label, node.label = NULL) {
 
   if (!is.null(MCMCcontrol$chainId)) {
     if (!is.null(MCMCcontrol$folderToSaveIntermediateResults)) {
-      filesToRestore <- list.files(path = MCMCcontrol$folderToSaveIntermediateResults, pattern = MCMCcontrol$chainId, full.names = TRUE)
-      if (length(filesToRestore) == 0) {
+      fileToRestore <- list.files(path = MCMCcontrol$folderToSaveIntermediateResults, pattern = MCMCcontrol$chainId, full.names = TRUE)
+      if (length(fileToRestore) == 0) {
         stop("Specified chain ID, but couldn't find associated files in folderToSaveIntermediateResults. Make sure chainID is correctly specified, or remove chain ID if you want to start the chain from scratch.")
       }
-      orderedFilesToRestore <- filesToRestore[order(as.numeric(stringr::str_extract(filesToRestore, pattern = "[[:digit:]]+(?=.Rdata)")))]
-      partialChain <- lapply(orderedFilesToRestore, function(fileToRestore) {
-        loadName <- load(fileToRestore)
-        get(loadName)
-      })
-      startIterNum <- length(orderedFilesToRestore) + 1
-      MCMCchainRandomId[seq_along(orderedFilesToRestore)] <- partialChain
+      loadName <- load(fileToRestore)
+      MCMCcontainer <- get(loadName)
+      startIterNum <- length(MCMCcontainer) + 1
+      MCMCchainRandomId <- MCMCcontrol$chainId
       cat("Resuming MCMC at iteration ", startIterNum, ". \n", sep = "")
     } else {
       stop("Specified a chain ID, but no folder where to find the intermediate results. Remove the chain ID if you want to start the chain from scratch, or specify a value for folderToSaveIntermediateResults in MCMCcontrol. \n")
@@ -255,7 +252,10 @@ phylo <- function(edge, edge.length, tip.label, node.label = NULL) {
     cat("Launching MCMC... \n")
   }
   cat("Chain is called ", MCMCchainRandomId, ". Specify this string in MCMCcontrol if you want to resume simulations.\n", sep = "")
-
+  cat("Starting values for log-priors: \n")
+  print(currentState$logPrior)
+  cat("Starting value for log-lik.: \n")
+  print(currentState$logLik)
   for (MCMCiter in startIterNum:(MCMCcontrol$n + MCMCcontrol$burnin)) {
     if ((MCMCiter %% MCMCcontrol$print.frequency) == 0) cat("This is MCMC iteration ", MCMCiter, sep = "", ".\n")
     for (paraName in names(logPriorAndTransFunList)) {
@@ -278,7 +278,11 @@ phylo <- function(edge, edge.length, tip.label, node.label = NULL) {
       proposalLogPP <- updatedLogLik + sum(updatedLogPrior)
       MHratio <- proposalValueAndTransKernRatio$transKernRatio * exp(proposalLogPP - currentState$logPP)
       if (runif(1) <= MHratio) {
-        cat("Move accepted! Parameter name: ", paraName, "\n", sep = "")
+        # cat("Move accepted! Parameter name: ", paraName, "\n", sep = "")
+        # cat("Updated log-priors: \n")
+        # print(updatedLogPrior)
+        # cat("Updated log-lik.: \n")
+        # cat(updatedLogLik)
         if (paraName %in% c("topology", "l", "b")) {
           currentState$paraValues$phyloAndTransTree <- updatedDualTree
         } else {
@@ -290,15 +294,18 @@ phylo <- function(edge, edge.length, tip.label, node.label = NULL) {
       }
     }
     MCMCcontainer[[MCMCiter]] <- currentState
+    if ((MCMCiter %% MCMCcontrol$save.frequency) == 0) {
+      subMCMCcontainer <- MCMCcontainer[1:MCMCiter]
+      save(subMCMCcontainer, file = paste(MCMCcontrol$folderToSaveIntermediateResults, "/chainID_", MCMCchainRandomId, ".Rdata", sep = ""), compress = TRUE)
+    }
   }
   cat("MCMC complete. Finalising... \n")
-  stepSize <- ceiling(MCMCcontrol$n * MCMCcontrol$thinning)
-  itersToKeep <- seq(from = MCMCcontrol$burnin + stepSize + 1, to = MCMCcontrol$burnin + MCMCcontrol$n, by = stepSize)
+  itersToKeep <- seq(from = MCMCcontrol$burnin + MCMCcontrol$stepSize, to = MCMCcontrol$burnin + MCMCcontrol$n, by = MCMCcontrol$stepSize)
   MCMCcontainer[itersToKeep]
 }
 
-MCMC.control <- function(n = 1e6, thinning = 0.1, burnin = 1e4, seed = 24, folderToSaveIntermediateResults = NULL, chainId = NULL, coalRateKernelSD = 0.5, print.frequency = 10) {
-  list(n = n, thinning = thinning, burnin = burnin, seed = seed, folderToSaveIntermediateResults = folderToSaveIntermediateResults, chainId = chainId, coalRateKernelSD = coalRateKernelSD, print.frequency = print.frequency)
+MCMC.control <- function(n = 1e6, stepSize = 50, burnin = 1e4, seed = 24, folderToSaveIntermediateResults = NULL, save.frequency = 100, chainId = NULL, coalRateKernelSD = 0.5, print.frequency = 10) {
+  list(n = n, stepSize = stepSize, burnin = burnin, seed = seed, folderToSaveIntermediateResults = folderToSaveIntermediateResults, chainId = chainId, coalRateKernelSD = coalRateKernelSD, print.frequency = print.frequency, save.frequency = save.frequency)
 }
 
 .getCurrentState <- function(currentStateVector, paraName = c("topology", "b", "l", "Lambda")) {
@@ -321,7 +328,7 @@ MCMC.control <- function(n = 1e6, thinning = 0.1, burnin = 1e4, seed = 24, folde
     proposedMove <- phangorn::rNNI(dualPhyloAndTransTree)
     newEdgeLengths <- .deriveTransTreeEdgeLengths(proposedMove)
     if (all(newEdgeLengths >= 0)) break
-    if (counter == 1000) {
+    if (counter == 50) {
       cat("Could not find a suitable move in the topological space... \n")
       proposedMove <- dualPhyloAndTransTree
       break
