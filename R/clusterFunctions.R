@@ -236,12 +236,15 @@ phylo <- function(edge, edge.length, tip.label, node.label = NULL) {
 
   if (!is.null(MCMCcontrol$chainId)) {
     if (!is.null(MCMCcontrol$folderToSaveIntermediateResults)) {
-      fileToRestore <- list.files(path = MCMCcontrol$folderToSaveIntermediateResults, pattern = MCMCcontrol$chainId, full.names = TRUE)
-      if (length(fileToRestore) == 0) {
+      filesToRestore <- list.files(path = MCMCcontrol$folderToSaveIntermediateResults, pattern = MCMCcontrol$chainId, full.names = TRUE)
+      if (length(filesToRestore) == 0) {
         stop("Specified chain ID, but couldn't find associated files in folderToSaveIntermediateResults. Make sure chainID is correctly specified, or remove chain ID if you want to start the chain from scratch.")
       }
-      loadName <- load(fileToRestore)
-      MCMCcontainer <- get(loadName)
+      filesToRestoreOrder <- order(as.numeric(stringr::str_extract(filesToRestore, "[:digit:]+(?=.Rdata)")))
+      MCMCcontainer <- c(lapply(filesToRestore[filesToRestoreOrder], function(filename) {
+        loadName <- load(filename)
+        get(loadName)
+      }))
       startIterNum <- length(MCMCcontainer) + 1
       MCMCchainRandomId <- MCMCcontrol$chainId
       cat("Resuming MCMC at iteration ", startIterNum, ". \n", sep = "")
@@ -295,8 +298,8 @@ phylo <- function(edge, edge.length, tip.label, node.label = NULL) {
     }
     MCMCcontainer[[MCMCiter]] <- currentState
     if ((MCMCiter %% MCMCcontrol$save.frequency) == 0) {
-      subMCMCcontainer <- MCMCcontainer[1:MCMCiter]
-      save(subMCMCcontainer, file = paste(MCMCcontrol$folderToSaveIntermediateResults, "/chainID_", MCMCchainRandomId, ".Rdata", sep = ""), compress = TRUE)
+      subMCMCcontainer <- MCMCcontainer[(MCMCiter - MCMCcontrol$save.frequency + 1):MCMCiter]
+      save(subMCMCcontainer, file = paste(MCMCcontrol$folderToSaveIntermediateResults, "/chainID_", MCMCchainRandomId, "_atIter", MCMCiter, ".Rdata", sep = ""), compress = TRUE)
     }
   }
   cat("MCMC complete. Finalising... \n")
