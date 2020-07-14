@@ -45,7 +45,7 @@ findBayesianClusters <- function(
     control$numMigrationsPoissonPriorMean <- length(unique(seqsRegionStamps)) - 1 # We prefer transmission trees with only one introduction per region; the -1 is for the outgroup, which starts off with a region without an introduction.
   }
 
-  control <- do.call('.defineBayesianClustersControl', control)
+  control <- do.call('findBayesianClusters.control', control)
 
   if (is.null(startingValuePhylo)) {
     MLphyloAndEvoPars <- .genMLphyloAndEvoPars(DNAbinData, rootSequenceName)
@@ -77,12 +77,13 @@ findBayesianClusters <- function(
 
 }
 
-.defineBayesianClustersControl <- function(
+findBayesianClusters.control <- function(
   logLikFun = presetPML,
   numMigrationsPoissonPriorMean = 1,
   MCMC.control = MCMC.control(),
+  transTreeCondOnPhylo = TRUE,
   controlForGenStartTransmissionTree = .controlForGenStartTransmissionTree()) {
-  list(logLikFun = logLikFun, numMigrationsPoissonPriorMean = numMigrationsPoissonPriorMean, MCMC.control = do.call("MCMC.control", MCMC.control), controlForGenStartTransmissionTree = do.call(".controlForGenStartTransmissionTree", controlForGenStartTransmissionTree))
+  list(logLikFun = logLikFun, numMigrationsPoissonPriorMean = numMigrationsPoissonPriorMean, MCMC.control = do.call("MCMC.control", MCMC.control), controlForGenStartTransmissionTree = do.call(".controlForGenStartTransmissionTree", controlForGenStartTransmissionTree), transTreeCondOnPhylo = transTreeCondOnPhylo)
 }
 
 # evoParsList is a list of varying parameters for the log-likelihood model. Control parameters are hard-coded.
@@ -98,7 +99,7 @@ presetPML <- function(phyloObj, phyDatObj, evoParsList) {
 }
 
 .genMLphyloAndEvoPars <- function(DNAbinData, rootSequenceName) {
-  distMatrix <- ape::dist.dna(x = DNAbinData, gamma = TRUE, pairwise.deletion = TRUE)
+  distMatrix <- ape::dist.dna(x = DNAbinData, model = "raw", pairwise.deletion = TRUE)
   startingPhylo <- ape::bionj(distMatrix)
   startPML <- phangorn::pml(tree = startingPhylo, data = phangorn::as.phyDat(DNAbinData), k = 4, model = "GTR")
   optimisedPhylo <- phangorn::optim.pml(object = startPML, optNni = TRUE, optBf = TRUE, optQ = TRUE, optInv = TRUE, optGamma = TRUE, optEdge = TRUE, optRate = TRUE)
@@ -210,6 +211,14 @@ phylo <- function(edge, edge.length, tip.label, node.label = NULL) {
   MCMCcontainer <- vector(mode = "list", length = floor((MCMCcontrol$n + MCMCcontrol$burnin)/MCMCcontrol$stepSize))
 
   currentState <- list(paraValues = startingValues, logLik = startLogLikValue)
+  bLogPrior <- lLogPrior <- function(x) 0
+  if (control$transTreeCondOnPhylo) {
+    bLogPrior <- function(x) .phyloBranchLengthsLogPriorFun(dualPhyloAndTransTree = x)
+    lLogPrior <- function(x) .transTreeBranchLengthsConditionalLogPrior(dualPhyloAndTransTree = x, mutationRate = mutationRate, numSites = ncol(DNAbinData))
+  } else {
+    bLogPrior <- function(x) .phyloBranchLengthsConditionalLogPriorFun(dualPhyloAndTransTree = x, mutationRate = mutationRate, numSites = ncol(DNAbinData))
+    lLogPrior <- function(x) .transTreeBranchLengthsLogPrior(dualPhyloAndTransTree = x, mutationRate = mutationRate)
+  }
 
   # Functions are defined here with an external dependence on currentState, but this is voluntary.
   logPriorAndTransFunList <- list(
@@ -217,10 +226,10 @@ phylo <- function(edge, edge.length, tip.label, node.label = NULL) {
       logPriorFun = function(x, Lambda = currentState$paraValues$Lambda) .topologyLogPriorFun(dualPhyloAndTransTree = x, Lambda = Lambda, numMigrationsPoissonPriorMean = control$numMigrationsPoissonPriorMean),
       transFun = .topologyTransFun),
     b = list(
-      logPriorFun = function(x) .phyloBranchLengthsLogPriorFun(dualPhyloAndTransTree = x, mutationRate = mutationRate, numSites = ncol(DNAbinData)),
+      logPriorFun = bLogPrior,
       transFun = function(x) .phyloBranchLengthsTransFun(x, deflateCoef = MCMCcontrol$phyloBranchLengthsDeflateCoef)),
     l = list(
-      logPriorFun = function(x) .transTreeBranchLengthsLogPrior(dualPhyloAndTransTree = x, mutationRate = mutationRate),
+      logPriorFun = lLogPrior,
       transFun = .transTreeBranchLengthsTransFun),
     Lambda = list(
       logPriorFun = .coalescenceRatesLogPriorFun,
@@ -260,10 +269,8 @@ phylo <- function(edge, edge.length, tip.label, node.label = NULL) {
   cat("Starting value for log-lik.: \n")
   print(currentState$logLik)
   for (MCMCiter in startIterNum:(MCMCcontrol$n + MCMCcontrol$burnin)) {
-    # if ((MCMCiter %% MCMCcontrol$print.frequency) == 0) cat("This is MCMC iteration ", MCMCiter, sep = "", ".\n")
-    cat("This is MCMC iteration ", MCMCiter, sep = "", ".\n")
+    if ((MCMCiter %% MCMCcontrol$print.frequency) == 0) cat("This is MCMC iteration ", MCMCiter, sep = "", ".\n")
     for (paraName in names(logPriorAndTransFunList)) {
-      cat("Processing param. ", paraName, ".\n", sep = "")
       proposalValueAndTransKernRatio <- logPriorAndTransFunList[[paraName]]$transFun(.getCurrentState(currentState, paraName))
       updatedLogPrior <- currentState$logPrior
       updatedLogPrior[[paraName]] <- logPriorAndTransFunList[[paraName]]$logPriorFun(proposalValueAndTransKernRatio$value)
@@ -522,15 +529,19 @@ MCMC.control <- function(n = 1e6, stepSize = 50, burnin = 1e4, seed = 24, folder
   list(K80transitionTransFun, K80transversionTransFun, propInvTransFun, gammaShapeTransFun)
 }
 
-# .phyloBranchLengthsLogPriorFun <- function(dualPhyloAndTransTree) {
+# .phyloBranchLengthsConditionalLogPriorFun <- function(dualPhyloAndTransTree) {
 #   branchLengths <- sapply(dualPhyloAndTransTree$edge.length, '$', "phylogeny")
 #   dnorm(x = log(branchLengths), mean = -7, sd = 5, log = TRUE)
 # }
 
-.phyloBranchLengthsLogPriorFun <- function(dualPhyloAndTransTree, mutationRate, numSites) {
+.phyloBranchLengthsConditionalLogPriorFun <- function(dualPhyloAndTransTree, mutationRate, numSites) {
   branchLengths <- sapply(dualPhyloAndTransTree$edge.length, '[[', "phylogeny")
   transTreeBranchLengths <- sapply(dualPhyloAndTransTree$edge.length, '[[', "transmissionTree")
   sum(dpois(x = floor(branchLengths * numSites), lambda = mutationRate * transTreeBranchLengths, log = TRUE))
+}
+
+.phyloBranchLengthsLogPriorFun <- function(dualPhyloAndTransTree) {
+  sum(sapply(dualPhyloAndTransTree$edge.length, function(edgeLengthElement) return(0))) # We're assuming a uniform prior. The densities are non-standardised but it doesn't matter for MCMC
 }
 
 .identifyNodeRegions <- function(transmissionTree) {
@@ -628,13 +639,29 @@ MCMC.control <- function(n = 1e6, stepSize = 50, burnin = 1e4, seed = 24, folder
 }
 
 .transTreeBranchLengthsLogPrior <- function(dualPhyloAndTransTree, mutationRate) {
-  transTreeEdgeLengths <- sapply(dualPhyloAndTransTree$edge.length, '$', "transmissionTree")
-  sum(sapply(seq_along(transTreeEdgeLengths), FUN = .transTreeSingleBranchLengthLogPrior))
+  transTreeSingleBranchLengthLogPrior <- function(transTreeBranchLength) {
+    return(0)
+  }
+  sum(sapply(seq_along(dualPhyloAndTransTree$edge.length), FUN = transTreeSingleBranchLengthLogPrior))
 }
 
-.transTreeSingleBranchLengthLogPrior <- function(transTreeBranchLength) {
-  return(1)
+.transTreeBranchLengthsConditionalLogPrior <- function(dualPhyloAndTransTree, mutationRate, numSites) {
+
+  transTreeSingleBranchLengthConditionalLogPrior <- function(branchIndex) {
+    phyloBranchLength <- dualPhyloAndTransTree$edge.length[[branchIndex]]$phylogeny
+    transTreeBranchLength <- dualPhyloAndTransTree$edge.length[[branchIndex]]$transmissionTree
+
+    if (identical(phyloBranchLength, 0)) {
+      logProb <- dexp(transTreeBranchLength, rate = mutationRate/2, log = TRUE)
+    } else {
+      logProb <- dexp(transTreeBranchLength, rate = mutationRate * numSites, log = TRUE)
+    }
+    logProb
+  }
+  sum(sapply(seq_along(dualPhyloAndTransTree$edge.length), FUN = transTreeSingleBranchLengthConditionalLogPrior))
 }
+
+
 
 # Might not guarantee that all branches in the transmission tree have positive length...
 .transTreeBranchLengthsTransFun <- function(dualPhyloAndTransTree) {
