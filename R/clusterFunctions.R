@@ -227,10 +227,10 @@ phylo <- function(edge, edge.length, tip.label, node.label = NULL) {
       transFun = .topologyTransFun),
     b = list(
       logPriorFun = bLogPrior,
-      transFun = function(x) .phyloBranchLengthsTransFun(x, deflateCoef = MCMCcontrol$phyloBranchLengthsDeflateCoef)),
+      transFun = function(x) .phyloBranchLengthsTransFun(x, deflateCoef = MCMCcontrol$phyloBranchLengthsDeflateCoef, propToModify = MCMCcontrol$propPhyloBranchesToModify)),
     l = list(
       logPriorFun = lLogPrior,
-      transFun = .transTreeBranchLengthsTransFun),
+      transFun = function(x) .transTreeBranchLengthsTransFun(dualPhyloAndTransTree = x, tuningPara = MCMCcontrol$transTreeTuningPara, propToModify = MCMCcontrol$propTransTreeBranchesToModify)),
     Lambda = list(
       logPriorFun = .coalescenceRatesLogPriorFun,
       transFun = function(x) .coalescenceRatesTransFun(x, sd = MCMCcontrol$coalRateKernelSD)))
@@ -290,6 +290,8 @@ phylo <- function(edge, edge.length, tip.label, node.label = NULL) {
       proposalLogPP <- updatedLogLik + sum(updatedLogPrior)
       MHratio <- proposalValueAndTransKernRatio$transKernRatio * exp(proposalLogPP - currentState$logPP)
       if (runif(1) <= MHratio) {
+        # if (paraName == "b") cat("Modified phylo. branch lengths! \n")
+        # if (paraName == "l") cat("Modified trans. tree branch lengths! \n")
         # cat("Move accepted! Parameter name: ", paraName, "\n", sep = "")
         # cat("Updated log-priors: \n")
         # print(updatedLogPrior)
@@ -317,8 +319,8 @@ phylo <- function(edge, edge.length, tip.label, node.label = NULL) {
   MCMCcontainer[elementsToKeep]
 }
 
-MCMC.control <- function(n = 1e6, stepSize = 50, burnin = 1e4, seed = 24, folderToSaveIntermediateResults = NULL, save.frequency = 100, chainId = NULL, coalRateKernelSD = 0.5, print.frequency = 10, phyloBranchLengthsDeflateCoef = 0.98) {
-  list(n = n, stepSize = stepSize, burnin = burnin, seed = seed, folderToSaveIntermediateResults = folderToSaveIntermediateResults, chainId = chainId, coalRateKernelSD = coalRateKernelSD, print.frequency = print.frequency, save.frequency = save.frequency, phyloBranchLengthsDeflateCoef = phyloBranchLengthsDeflateCoef)
+MCMC.control <- function(n = 1e6, stepSize = 50, burnin = 1e4, seed = 24, folderToSaveIntermediateResults = NULL, save.frequency = 100, chainId = NULL, coalRateKernelSD = 0.5, print.frequency = 10, phyloBranchLengthsDeflateCoef = 0.98, propPhyloBranchesToModify = 0.1, transTreeTuningPara = 0.1, propTransTreeBranchesToModify = 0.2) {
+  list(n = n, stepSize = stepSize, burnin = burnin, seed = seed, folderToSaveIntermediateResults = folderToSaveIntermediateResults, chainId = chainId, coalRateKernelSD = coalRateKernelSD, print.frequency = print.frequency, save.frequency = save.frequency, phyloBranchLengthsDeflateCoef = phyloBranchLengthsDeflateCoef, propPhyloBranchesToModify = propPhyloBranchesToModify, transTreeTuningPara = transTreeTuningPara, propTransTreeBranchesToModify = propTransTreeBranchesToModify)
 }
 
 .getCurrentState <- function(currentStateVector, paraName = c("topology", "b", "l", "Lambda")) {
@@ -479,24 +481,6 @@ MCMC.control <- function(n = 1e6, stepSize = 50, burnin = 1e4, seed = 24, folder
   return(.getNodeLabel(phylogeny, vertexNum))
 }
 
-.phyloBranchLengthsTransFun <- function(dualPhyloAndTransTree, deflateCoef = 0.98) {
-  logBranchLengths <- log(sapply(dualPhyloAndTransTree$edge.length, FUN = '[[', "phylogeny"))
-  nonZeroLengthBranchPos <- which(!is.infinite(logBranchLengths))
-  # transKernSD <- 1
-  modCoef <- c(deflateCoef, 1/deflateCoef)
-  newPos <- logBranchLengths
-  #newPos[nonZeroLengthBranchPos] <- rnorm(n = length(nonZeroLengthBranchPos), mean = logBranchLengths[nonZeroLengthBranchPos], sd = transKernSD)
-  newPos[nonZeroLengthBranchPos] <- sample(x = modCoef, size = length(nonZeroLengthBranchPos), replace = TRUE) * newPos[nonZeroLengthBranchPos]
-  # logTransKernRatio <- sum(dnorm(x = logBranchLengths[nonZeroLengthBranchPos], mean = newPos[nonZeroLengthBranchPos], sd = transKernSD, log = TRUE) - dnorm(x = newPos[nonZeroLengthBranchPos], mean = logBranchLengths[nonZeroLengthBranchPos], sd = transKernSD, log = TRUE))
-  dualPhyloAndTransTree$edge.length <- lapply(seq_along(dualPhyloAndTransTree$edge.length), function(edgeIndex) {
-    edgeElement <- dualPhyloAndTransTree$edge.length[[edgeIndex]]
-    edgeElement$phylogeny <- exp(newPos[[edgeIndex]])
-    edgeElement
-  })
-
-  list(value = dualPhyloAndTransTree, transKernRatio = 1)
-}
-
 # .getEvoParsLogPriorsFunList <- function() {
 #   K80transversionLogPrior <- function(x) {
 #     return(0) # Improper
@@ -542,6 +526,25 @@ MCMC.control <- function(n = 1e6, stepSize = 50, burnin = 1e4, seed = 24, folder
 
 .phyloBranchLengthsLogPriorFun <- function(dualPhyloAndTransTree) {
   sum(sapply(dualPhyloAndTransTree$edge.length, function(edgeLengthElement) return(0))) # We're assuming a uniform prior. The densities are non-standardised but it doesn't matter for MCMC
+}
+
+.phyloBranchLengthsTransFun <- function(dualPhyloAndTransTree, deflateCoef = 0.98, propToModify = 0.1) {
+  logBranchLengths <- log(sapply(dualPhyloAndTransTree$edge.length, FUN = '[[', "phylogeny"))
+  nonZeroLengthBranchPos <- which(!is.infinite(logBranchLengths))
+  numToModify <- ceiling(propToModify * length(nonZeroLengthBranchPos))
+  branchesToModify <- sample(nonZeroLengthBranchPos, size = numToModify, replace = FALSE)
+  modCoef <- c(deflateCoef, 1/deflateCoef)
+  newPos <- logBranchLengths
+  #newPos[nonZeroLengthBranchPos] <- rnorm(n = length(nonZeroLengthBranchPos), mean = logBranchLengths[nonZeroLengthBranchPos], sd = transKernSD)
+  newPos[branchesToModify] <- sample(x = modCoef, size = length(branchesToModify), replace = TRUE) * newPos[branchesToModify]
+  # logTransKernRatio <- sum(dnorm(x = logBranchLengths[nonZeroLengthBranchPos], mean = newPos[nonZeroLengthBranchPos], sd = transKernSD, log = TRUE) - dnorm(x = newPos[nonZeroLengthBranchPos], mean = logBranchLengths[nonZeroLengthBranchPos], sd = transKernSD, log = TRUE))
+  dualPhyloAndTransTree$edge.length <- lapply(seq_along(dualPhyloAndTransTree$edge.length), function(edgeIndex) {
+    edgeElement <- dualPhyloAndTransTree$edge.length[[edgeIndex]]
+    edgeElement$phylogeny <- exp(newPos[[edgeIndex]])
+    edgeElement
+  })
+
+  list(value = dualPhyloAndTransTree, transKernRatio = 1)
 }
 
 .identifyNodeRegions <- function(transmissionTree) {
@@ -661,10 +664,7 @@ MCMC.control <- function(n = 1e6, stepSize = 50, burnin = 1e4, seed = 24, folder
   sum(sapply(seq_along(dualPhyloAndTransTree$edge.length), FUN = transTreeSingleBranchLengthConditionalLogPrior))
 }
 
-
-
-# Might not guarantee that all branches in the transmission tree have positive length...
-.transTreeBranchLengthsTransFun <- function(dualPhyloAndTransTree) {
+.transTreeBranchLengthsTransFun <- function(dualPhyloAndTransTree, tuningPara = 0.1, propToModify = 0.1) {
   updateNodeTime <- function(nodeIndex) {
     currentTime <- .getVertexLabel(dualPhyloAndTransTree, nodeIndex)$time
     if (nodeIndex != (ape::Ntip(dualPhyloAndTransTree) + 1)) {
@@ -675,16 +675,18 @@ MCMC.control <- function(n = 1e6, stepSize = 50, burnin = 1e4, seed = 24, folder
     }
     childrenIndices <- phangorn::Children(dualPhyloAndTransTree, nodeIndex)
     childrenTimes <- sapply(childrenIndices, function(childIndex) .getVertexLabel(dualPhyloAndTransTree, childIndex)$time)
-    lowerBound <- currentTime - (currentTime - parentTime)/3
-    upperBound <- currentTime + (min(childrenTimes) - currentTime)/3
+    lowerBound <- currentTime - (currentTime - parentTime) * tuningPara
+    upperBound <- currentTime + (min(childrenTimes) - currentTime) * tuningPara
     updatedTime <- runif(1, lowerBound, upperBound)
     updatedTime
   }
-  updatedNodeTimes <- sapply(seq_along(dualPhyloAndTransTree$node.label) + ape::Ntip(dualPhyloAndTransTree), updateNodeTime)
+  numNodesToModify <- ceiling(propToModify * ape::Nnode(dualPhyloAndTransTree))
+  nodesToUpdate <- sample(seq_along(dualPhyloAndTransTree$node.label) + ape::Ntip(dualPhyloAndTransTree), size = numNodesToModify, replace = FALSE)
+  updatedNodeTimes <- sapply(nodesToUpdate, updateNodeTime)
 
-  dualPhyloAndTransTree$node.label <- lapply(seq_along(dualPhyloAndTransTree$node.label), function(nodeIndex) {
-    updatedNode <- dualPhyloAndTransTree$node.label[[nodeIndex]]
-    updatedNode$time <- updatedNodeTimes[[nodeIndex]]
+  dualPhyloAndTransTree$node.label[nodesToUpdate - ape::Ntip(dualPhyloAndTransTree)] <- lapply(seq_along(nodesToUpdate), function(alongNodeIndex) {
+    updatedNode <- .getVertexLabel(dualPhyloAndTransTree, nodesToUpdate[alongNodeIndex])
+    updatedNode$time <- updatedNodeTimes[[alongNodeIndex]]
     updatedNode
   })
   updatedTransTreeEdges <- .deriveTransTreeEdgeLengths(dualPhyloAndTransTree)
