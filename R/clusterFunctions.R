@@ -142,7 +142,8 @@ presetPML <- function(phyloObj, phyDatObj, evoParsList) {
   getEdgeListElements <- function(edgeNumber) {
     nodeNumber <- transmissionTree$edge[edgeNumber, 2]
     nodeTime <- .getVertexLabel(transmissionTree, vertexNum = nodeNumber)$time
-    parentNumber <- phangorn::Ancestors(transmissionTree, node = nodeNumber, type = "parent")
+    # parentNumber <- phangorn::Ancestors(transmissionTree, node = nodeNumber, type = "parent")
+    parentNumber <- transmissionTree$edge[match(nodeNumber, transmissionTree$edge[ , 2])]
     parentTime <- .getVertexLabel(transmissionTree, parentNumber)$time
     list(transmissionTree = nodeTime - parentTime, phylogeny = transmissionTree$edge.length[[edgeNumber]])
   }
@@ -244,12 +245,13 @@ phylo <- function(edge, edge.length, tip.label, node.label = NULL) {
       if (length(filesToRestore) == 0) {
         stop("Specified chain ID, but couldn't find associated files in folderToSaveIntermediateResults. Make sure chainID is correctly specified, or remove chain ID if you want to start the chain from scratch.")
       }
-      filesToRestoreOrder <- order(as.numeric(stringr::str_extract(filesToRestore, "[:digit:]+(?=.Rdata)")))
+      iterNums <- as.numeric(stringr::str_extract(filesToRestore, "[:digit:]+(?=.Rdata)"))
+      filesToRestoreOrder <- order(iterNums)
       MCMCcontainer[1:length(filesToRestore)] <- do.call("c", lapply(filesToRestore[filesToRestoreOrder], function(filename) {
         loadName <- load(filename)
         get(loadName)
       }))
-      startIterNum <- length(MCMCcontainer) * MCMCcontrol$stepSize + 1
+      startIterNum <- max(iterNums) + 1
       MCMCchainRandomId <- MCMCcontrol$chainId
       cat("Resuming MCMC at iteration ", startIterNum, ". \n", sep = "")
     } else {
@@ -378,7 +380,8 @@ MCMC.control <- function(n = 1e6, stepSize = 50, burnin = 1e4, seed = 24, folder
   nodeTimes <- sapply(transmissionTree$node.label, function(nodeLabel) nodeLabel$time)
   tipTimes <- sapply(transmissionTree$tip.label, function(tipLabel) tipLabel$time)
   getMigrationTimesAndChildNodeNums <- function(nodeNum) {
-    parentNum <- phangorn::Ancestors(x = transmissionTree, node = nodeNum, type = "parent")
+    # parentNum <- phangorn::Ancestors(x = transmissionTree, node = nodeNum, type = "parent")
+    parentNum <- transmissionTree$edge[match(nodeNum, transmissionTree$edge[ , 2])]
     parentRegion <- .getVertexLabel(transmissionTree, parentNum)$region
     currentRegion <- .getVertexLabel(transmissionTree, nodeNum)$region
     returnValue <- list(childNode = nodeNum, time = NULL)
@@ -416,7 +419,8 @@ MCMC.control <- function(n = 1e6, stepSize = 50, burnin = 1e4, seed = 24, folder
         numLineagesPerRegion[[.getVertexLabel(transmissionTree, vertexNumber)$region]] <- numLineagesPerRegion[[.getVertexLabel(transmissionTree, vertexNumber)$region]] - 1
       } else {
         childNodeNum <- sortedPhyloStructCodeFrame$vertexNum[rowIndex]
-        parentNodeNum <- phangorn::Ancestors(x = transmissionTree, node = childNodeNum, type = "parent")
+        # parentNodeNum <- phangorn::Ancestors(x = transmissionTree, node = childNodeNum, type = "parent")
+        parentNodeNum <- transmissionTree$edge[match(childNodeNum, transmissionTree$edge[ , 2])]
         childRegion <- .getVertexLabel(transmissionTree, childNodeNum)$region
         parentRegion <- .getVertexLabel(transmissionTree, parentNodeNum)$region
         numLineagesPerRegion[[childRegion]] <- numLineagesPerRegion[[childRegion]] + 1
@@ -447,7 +451,8 @@ MCMC.control <- function(n = 1e6, stepSize = 50, burnin = 1e4, seed = 24, folder
   getMigrationIndicator <- function(vertexIndex) {
     vertexLabel <- .getVertexLabel(dualPhyloAndTransTree, vertexIndex)
     currentRegion <- vertexLabel$region
-    parentIndex <- phangorn::Ancestors(dualPhyloAndTransTree, vertexIndex, "parent")
+    # parentIndex <- phangorn::Ancestors(dualPhyloAndTransTree, vertexIndex, "parent")
+    parentIndex <- dualPhyloAndTransTree$edge[match(vertexIndex, dualPhyloAndTransTree$edge[ , 2])]
     parentRegion <- .getVertexLabel(dualPhyloAndTransTree, parentIndex)$region
     parentRegion != currentRegion
   }
@@ -663,7 +668,8 @@ MCMC.control <- function(n = 1e6, stepSize = 50, burnin = 1e4, seed = 24, folder
   updateNodeTime <- function(nodeIndex) {
     currentTime <- .getVertexLabel(dualPhyloAndTransTree, nodeIndex)$time
     if (nodeIndex != (numTips + 1)) {
-      parentIndex <- phangorn::Ancestors(dualPhyloAndTransTree, nodeIndex, "parent")
+      # parentIndex <- phangorn::Ancestors(dualPhyloAndTransTree, nodeIndex, "parent")
+      parentIndex <- dualPhyloAndTransTree$edge[match(nodeIndex, dualPhyloAndTransTree$edge[ , 2])]
       parentTime <- .getVertexLabel(dualPhyloAndTransTree, parentIndex)$time
     } else {
       parentTime <- currentTime
