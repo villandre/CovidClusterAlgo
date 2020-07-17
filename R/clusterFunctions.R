@@ -144,7 +144,7 @@ presetPML <- function(phyloObj, phyDatObj, evoParsList) {
     nodeTime <- .getVertexLabel(transmissionTree, vertexNum = nodeNumber)$time
     # parentNumber <- phangorn::Ancestors(transmissionTree, node = nodeNumber, type = "parent")
     parentNumber <- transmissionTree$edge[match(nodeNumber, transmissionTree$edge[ , 2])]
-    parentTime <- .getVertexLabel(transmissionTree, parentNumber)$time
+    parentTime <- transmissionTree$node.label[[parentNumber - numTips]]$time
     list(transmissionTree = nodeTime - parentTime, phylogeny = transmissionTree$edge.length[[edgeNumber]])
   }
   transmissionTree$edge.length <- lapply(1:nrow(transmissionTree$edge), FUN = getEdgeListElements)
@@ -427,7 +427,11 @@ MCMC.control <- function(n = 1e6, stepSize = 50, burnin = 1e4, seed = 24, folder
         childNodeNum <- sortedPhyloStructCodeFrame$vertexNum[rowIndex]
         # parentNodeNum <- phangorn::Ancestors(x = transmissionTree, node = childNodeNum, type = "parent")
         parentNodeNum <- transmissionTree$edge[match(childNodeNum, transmissionTree$edge[ , 2])]
-        childRegion <- .getVertexLabel(transmissionTree, childNodeNum)$region
+        nodeIndicator <- childNodeNum > numTips
+        vertexIndex <- childNodeNum - numTips * nodeIndicator
+        listName <- "tip.label"
+        if (nodeIndicator) listName <- "node.label"
+        childRegion <- transmissionTree[[listName]][[vertexIndex]]$region
         parentRegion <- transmissionTree$node.label[[parentNodeNum - numTips]]$region
         numLineagesPerRegion[[childRegion]] <- numLineagesPerRegion[[childRegion]] + 1
         numLineagesPerRegion[[parentRegion]] <- numLineagesPerRegion[[parentRegion]] + 1
@@ -562,7 +566,7 @@ MCMC.control <- function(n = 1e6, stepSize = 50, burnin = 1e4, seed = 24, folder
 .identifyNodeRegions <- function(transmissionTree) {
   numTips <- length(transmissionTree$tip.label)
   resolveLowerLevels <- function(nodeNumber, resolveValue) {
-    currentNodeRegion <- .getVertexLabel(transmissionTree, nodeNumber)$region
+    currentNodeRegion <- transmissionTree$node.label[[nodeNumber - numTips]]$region
     splitRegionName <- stringr::str_split(currentNodeRegion, pattern = ",")
     if (resolveValue %in% splitRegionName) {
       transmissionTree$node.label[[nodeNumber - numTips]]$region <<- resolveValue
@@ -665,11 +669,11 @@ MCMC.control <- function(n = 1e6, stepSize = 50, burnin = 1e4, seed = 24, folder
   numTips <- length(dualPhyloAndTransTree$tip.label)
   numNodes <- length(dualPhyloAndTransTree$node.label)
   updateNodeTime <- function(nodeIndex) {
-    currentTime <- .getVertexLabel(dualPhyloAndTransTree, nodeIndex)$time
+    currentTime <- dualPhyloAndTransTree$node.label[[nodeIndex - numTips]]$time
     if (nodeIndex != (numTips + 1)) {
       # parentIndex <- phangorn::Ancestors(dualPhyloAndTransTree, nodeIndex, "parent")
       parentIndex <- dualPhyloAndTransTree$edge[match(nodeIndex, dualPhyloAndTransTree$edge[ , 2])]
-      parentTime <- .getVertexLabel(dualPhyloAndTransTree, parentIndex)$time
+      parentTime <- dualPhyloAndTransTree$node.label[[parentIndex - numTips]]$time
     } else {
       parentTime <- currentTime
     }
