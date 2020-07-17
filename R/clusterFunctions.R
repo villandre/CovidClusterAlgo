@@ -253,6 +253,7 @@ phylo <- function(edge, edge.length, tip.label, node.label = NULL) {
       }))
       startIterNum <- max(iterNums) + 1
       MCMCchainRandomId <- MCMCcontrol$chainId
+      currentState <- MCMCcontainer[[length(filesToRestore)]]
       cat("Resuming MCMC at iteration ", startIterNum, ". \n", sep = "")
     } else {
       stop("Specified a chain ID, but no folder where to find the intermediate results. Remove the chain ID if you want to start the chain from scratch, or specify a value for folderToSaveIntermediateResults in MCMCcontrol. \n")
@@ -306,7 +307,9 @@ phylo <- function(edge, edge.length, tip.label, node.label = NULL) {
     }
     if ((MCMCiter %% MCMCcontrol$stepSize) == 0) {
       MCMCcontainer[[MCMCiter/MCMCcontrol$stepSize]] <- currentState
-      save(currentState, file = paste(MCMCcontrol$folderToSaveIntermediateResults, "/chainID_", MCMCchainRandomId, "_atIter", MCMCiter, ".Rdata", sep = ""), compress = TRUE)
+      if (!is.null(MCMCcontrol$folderToSaveIntermediateResults)) {
+        save(currentState, file = paste(MCMCcontrol$folderToSaveIntermediateResults, "/chainID_", MCMCchainRandomId, "_atIter", MCMCiter, ".Rdata", sep = ""), compress = TRUE)
+      }
     }
   }
   cat("MCMC complete. Finalising... \n")
