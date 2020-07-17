@@ -411,8 +411,8 @@ MCMC.control <- function(n = 1e6, stepSize = 50, burnin = 1e4, seed = 24, folder
   numLineagesPerRegion <- rep(0, numRegions)
   names(numLineagesPerRegion) <- regionNames
   cumulativeLogProb <- 0
-  cumulativeGradientWithin <- rep(0, length(Lambda))
-  names(cumulativeGradientWithin) <- names(Lambda)
+  # cumulativeGradientWithin <- rep(0, length(Lambda))
+  # names(cumulativeGradientWithin) <- names(Lambda)
   timeIndices <- as.numeric(factor(sortedPhyloStructCodeFrame$time))
   for (timeIndex in head(unique(timeIndices), n = -1)) {
     rowsConsidered <- which(timeIndices == timeIndex)
@@ -432,45 +432,46 @@ MCMC.control <- function(n = 1e6, stepSize = 50, burnin = 1e4, seed = 24, folder
         if (nodeIndicator) listName <- "node.label"
         childRegion <- transmissionTree[[listName]][[vertexIndex]]$region
         parentRegion <- transmissionTree$node.label[[parentNodeNum - numTips]]$region
-        numLineagesPerRegion[[childRegion]] <- numLineagesPerRegion[[childRegion]] + 1
+        # A migration along a branch in reverse time eliminates one lineage in the child region and adds one in the parent region.
+        numLineagesPerRegion[[childRegion]] <- numLineagesPerRegion[[childRegion]] - 1
         numLineagesPerRegion[[parentRegion]] <- numLineagesPerRegion[[parentRegion]] + 1
       }
     }
     intervalDuration <- sortedPhyloStructCodeFrame$time[[rowsConsidered[[1]]]] - sortedPhyloStructCodeFrame$time[[rowsConsidered[[1]] + length(rowsConsidered)]]
 
     withinRegionCoalescencePossible <- numLineagesPerRegion > 1
-    withinGradient <- rep(0, length(Lambda))
-    names(withinGradient) <- names(Lambda)
+    # withinGradient <- rep(0, length(Lambda))
+    # names(withinGradient) <- names(Lambda)
     cumulWithinRatePerRegion <- sapply(regionNames[withinRegionCoalescencePossible], function(regionName) {
       choose(numLineagesPerRegion[[regionName]], 2) * Lambda[[regionName]] * intervalDuration
     })
     names(cumulWithinRatePerRegion) <- regionNames[withinRegionCoalescencePossible]
-    withinGradient[names(cumulWithinRatePerRegion)] <- -cumulWithinRatePerRegion/Lambda[names(cumulWithinRatePerRegion)]
+    # withinGradient[names(cumulWithinRatePerRegion)] <- -cumulWithinRatePerRegion/Lambda[names(cumulWithinRatePerRegion)]
     if (length(cumulWithinRatePerRegion) == 0) cumulWithinRatePerRegion <- 0
     totalRate <- sum(cumulWithinRatePerRegion)
     cumulativeLogProb <- cumulativeLogProb - totalRate # That takes into account the exponent of exp(), hence the "-".
-    cumulativeGradientWithin <- cumulativeGradientWithin + withinGradient[names(cumulativeGradientWithin)]
+    # cumulativeGradientWithin <- cumulativeGradientWithin + withinGradient[names(cumulativeGradientWithin)]
 
     if (sortedPhyloStructCodeFrame$type[[rowsConsidered[[1]] + length(rowsConsidered)]] == "C") {
       regionCode <- transmissionTree$node.label[[sortedPhyloStructCodeFrame$vertexNum[[rowsConsidered[[1]] + length(rowsConsidered)]] - numTips]]$region
       cumulativeLogProb <- cumulativeLogProb + log(Lambda[[regionCode]] * intervalDuration)
-      cumulativeGradientWithin[[regionCode]] <- cumulativeGradientWithin[[regionCode]] + 1/(Lambda[[regionCode]] * intervalDuration)
+      # cumulativeGradientWithin[[regionCode]] <- cumulativeGradientWithin[[regionCode]] + 1/(Lambda[[regionCode]] * intervalDuration)
     }
   }
-  getMigrationIndicator <- function(vertexIndex) {
-    if (vertexIndex > numTips) {
-      currentRegion <- dualPhyloAndTransTree$node.label[[vertexIndex - numTips]]$region
-    } else {
-      currentRegion <- dualPhyloAndTransTree$tip.label[[vertexIndex]]$region
-    }
-    # parentIndex <- phangorn::Ancestors(dualPhyloAndTransTree, vertexIndex, "parent")
-    parentIndex <- dualPhyloAndTransTree$edge[match(vertexIndex, dualPhyloAndTransTree$edge[ , 2]), 1]
-    # parentRegion <- .getVertexLabel(dualPhyloAndTransTree, parentIndex)$region
-    parentRegion <- dualPhyloAndTransTree$node.label[[parentIndex - numTips]]$region
-    parentRegion != currentRegion
-  }
-  numMigrations <- sum(sapply(c(1:numTips, (numTips + 2):(numTips + numNodes)), FUN = getMigrationIndicator))
-  list(objective = cumulativeLogProb + .numMigrationsLogPriorFunWithMeanPar(x = numMigrations, meanPar = numMigrationsPoissonPriorMean), gradient = cumulativeGradientWithin)
+  # getMigrationIndicator <- function(vertexIndex) {
+  #   if (vertexIndex > numTips) {
+  #     currentRegion <- dualPhyloAndTransTree$node.label[[vertexIndex - numTips]]$region
+  #   } else {
+  #     currentRegion <- dualPhyloAndTransTree$tip.label[[vertexIndex]]$region
+  #   }
+  #   # parentIndex <- phangorn::Ancestors(dualPhyloAndTransTree, vertexIndex, "parent")
+  #   parentIndex <- dualPhyloAndTransTree$edge[match(vertexIndex, dualPhyloAndTransTree$edge[ , 2]), 1]
+  #   # parentRegion <- .getVertexLabel(dualPhyloAndTransTree, parentIndex)$region
+  #   parentRegion <- dualPhyloAndTransTree$node.label[[parentIndex - numTips]]$region
+  #   parentRegion != currentRegion
+  # }
+
+  list(objective = cumulativeLogProb + .numMigrationsLogPriorFunWithMeanPar(x = length(migrationTimes), meanPar = numMigrationsPoissonPriorMean), gradient = NULL)
 }
 
 .topologyLogPriorFun <- function(dualPhyloAndTransTree, Lambda, numMigrationsPoissonPriorMean) {
