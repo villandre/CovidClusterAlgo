@@ -44,22 +44,33 @@ findBayesianClusters <- function(
   if (is.null(control$numMigrationsPoissonPriorMean)) {
     control$numMigrationsPoissonPriorMean <- length(unique(seqsRegionStamps)) - 1 # We prefer transmission trees with only one introduction per region; the -1 is for the outgroup, which starts off with a region without an introduction.
   }
-
-  control <- do.call('findBayesianClusters.control', control)
-
-  if (is.null(startingValuePhylo)) {
-    MLphyloAndEvoPars <- .genMLphyloAndEvoPars(DNAbinData, rootSequenceName)
-    startingValuePhylo <- MLphyloAndEvoPars$phylogeny
-    if (is.null(evoParsList)) evoParsList <- MLphyloAndEvoPars$evoParsList
-  }
-
   startingValues <- list()
-
   # The "edge.length" component of "phylogeny" is a list containing branch lengths for both the transmission tree and phylogeny.
+  if (is.null(control$MCMC.control$folderToSaveIntermediateResults) | is.null(control$MCMC.control$chainId)) {
+    control <- do.call('findBayesianClusters.control', control)
+    control$MCMC.control$chainId <- stringi::stri_rand_strings(1, 6) # This should really be different every time, hence its position before set.seed.
+    if (is.null(startingValuePhylo)) {
+      MLphyloAndEvoPars <- .genMLphyloAndEvoPars(DNAbinData, rootSequenceName)
+      startingValuePhylo <- MLphyloAndEvoPars$phylogeny
+      if (is.null(evoParsList)) evoParsList <- MLphyloAndEvoPars$evoParsList
+    }
+    if (!is.null(control$MCMC.control$folderToSaveIntermediateResults)) {
+      filename <- paste(control$MCMC.control$folderToSaveIntermediateResults, "/chain_", control$MCMC.control$chainId, "_controlParameters.Rdata", sep = "")
+      save(control, file = filename)
+      evoParsFilename <- paste(control$MCMC.control$folderToSaveIntermediateResults, "/chain_", control$MCMC.control$chainId, "_evoParameters.Rdata", sep = "")
+      save(evoParsList, file = evoParsFilename)
+    }
 
-  startingValues$phyloAndTransTree <- .genStartDualPhyloAndTransTree(phylogeny = startingValuePhylo, seqsTimestampsPOSIXct = seqsTimestampsPOSIXct, seqsRegionStamps = seqsRegionStamps, mutationRate = mutationRate, control = control$controlForGenStartTransmissionTree)
+    startingValues$phyloAndTransTree <- .genStartDualPhyloAndTransTree(phylogeny = startingValuePhylo, seqsTimestampsPOSIXct = seqsTimestampsPOSIXct, seqsRegionStamps = seqsRegionStamps, mutationRate = mutationRate, control = control$controlForGenStartTransmissionTree)
 
-  startingValues$Lambda <- .genStartCoalescenceRates(startingValues$phyloAndTransTree, control = control)
+    startingValues$Lambda <- .genStartCoalescenceRates(startingValues$phyloAndTransTree, control = control)
+  } else {
+    cat("Restoring chain", control$MCMC.control$chainId, "control parameters... \n", sep = " ")
+    filename <- paste(control$MCMC.control$folderToSaveIntermediateResults, "/chain_", control$MCMC.control$chainId, "_controlParameters.Rdata", sep = "")
+    evoParsFilename <- paste(control$MCMC.control$folderToSaveIntermediateResults, "/chain_", control$MCMC.control$chainId, "_evoParameters.Rdata", sep = "")
+    load(filename) # This will restore "control" to its original values.
+    load(evoParsFilename) # This will restore evoParsList.
+  }
 
   sampledTreesWithPP <- .optimTreeMCMC(
     startingValues = startingValues,
@@ -201,12 +212,29 @@ phylo <- function(edge, edge.length, tip.label, node.label = NULL) {
   MCMCcontrol <- do.call(MCMC.control, control$MCMC.control)
   phyDatData <- phangorn::as.phyDat(DNAbinData)
   # The following assumes that the order of tip labels matches the order of sequences in DNAbinData.
-  phyloObj <- .convertToPhylo(startingValues$phyloAndTransTree)
-  startLogLikValue <- logLikFun(phyloObj, phyDatData, evoParsList)
-
   MCMCcontainer <- vector(mode = "list", length = floor((MCMCcontrol$n + MCMCcontrol$burnin)/MCMCcontrol$stepSize))
+  filesToRestore <- NULL
+  if (!is.null(MCMCcontrol$folderToSaveIntermediateResults)) {
+    filesToRestore <- list.files(path = MCMCcontrol$folderToSaveIntermediateResults, pattern = paste(MCMCcontrol$chainId, "_atIter", sep = ""), full.names = TRUE)
+  }
+  if (length(filesToRestore) > 0) {
+    iterNums <- as.numeric(stringr::str_extract(filesToRestore, "[:digit:]+(?=.Rdata)"))
+    filesToRestoreOrder <- order(iterNums)
+    MCMCcontainer[1:length(filesToRestore)] <- lapply(filesToRestore[filesToRestoreOrder], function(filename) {
+      loadName <- load(filename)
+      get(loadName)
+    })
+    startIterNum <- max(iterNums) + 1
+    currentState <- MCMCcontainer[[length(filesToRestore)]]
+    cat("Resuming MCMC at iteration ", startIterNum, ". \n", sep = "")
+  } else {
+    phyloObj <- .convertToPhylo(startingValues$phyloAndTransTree)
+    startLogLikValue <- logLikFun(phyloObj, phyDatData, evoParsList)
 
-  currentState <- list(paraValues = startingValues, logLik = startLogLikValue)
+    currentState <- list(paraValues = startingValues, logLik = startLogLikValue)
+    startIterNum <- 1
+    cat("Launching MCMC... \n")
+  }
   bLogPrior <- lLogPrior <- function(x) 0
   if (control$transTreeCondOnPhylo) {
     bLogPrior <- function(x) .phyloBranchLengthsLogPriorFun(dualPhyloAndTransTree = x)
@@ -215,7 +243,6 @@ phylo <- function(edge, edge.length, tip.label, node.label = NULL) {
     bLogPrior <- function(x) .phyloBranchLengthsConditionalLogPriorFun(dualPhyloAndTransTree = x, mutationRate = mutationRate, numSites = ncol(DNAbinData))
     lLogPrior <- function(x) .transTreeBranchLengthsLogPrior(dualPhyloAndTransTree = x, mutationRate = mutationRate)
   }
-
   # Functions are defined here with an external dependence on currentState, but this is voluntary.
   logPriorAndTransFunList <- list(
     topology = list(
@@ -230,38 +257,13 @@ phylo <- function(edge, edge.length, tip.label, node.label = NULL) {
     Lambda = list(
       logPriorFun = .coalescenceRatesLogPriorFun,
       transFun = function(x) .coalescenceRatesTransFun(x, sd = MCMCcontrol$coalRateKernelSD)))
-  currentState$logPrior <- sapply(names(logPriorAndTransFunList), FUN = function(paraName) logPriorAndTransFunList[[paraName]]$logPriorFun(.getCurrentState(currentStateVector = currentState, paraName = paraName)))
-  names(currentState$logPrior) <- names(logPriorAndTransFunList)
 
-  currentState$logPP <- startLogLikValue + sum(currentState$logPrior)
-
-  MCMCchainRandomId <- stringi::stri_rand_strings(1, 6) # This should really be different every time, hence its position before set.seed.
-  set.seed(MCMCcontrol$seed)
-  startIterNum <- 1
-
-  if (!is.null(MCMCcontrol$chainId)) {
-    if (!is.null(MCMCcontrol$folderToSaveIntermediateResults)) {
-      filesToRestore <- list.files(path = MCMCcontrol$folderToSaveIntermediateResults, pattern = MCMCcontrol$chainId, full.names = TRUE)
-      if (length(filesToRestore) == 0) {
-        stop("Specified chain ID, but couldn't find associated files in folderToSaveIntermediateResults. Make sure chainID is correctly specified, or remove chain ID if you want to start the chain from scratch.")
-      }
-      iterNums <- as.numeric(stringr::str_extract(filesToRestore, "[:digit:]+(?=.Rdata)"))
-      filesToRestoreOrder <- order(iterNums)
-      MCMCcontainer[1:length(filesToRestore)] <- do.call("c", lapply(filesToRestore[filesToRestoreOrder], function(filename) {
-        loadName <- load(filename)
-        get(loadName)
-      }))
-      startIterNum <- max(iterNums) + 1
-      MCMCchainRandomId <- MCMCcontrol$chainId
-      currentState <- MCMCcontainer[[length(filesToRestore)]]
-      cat("Resuming MCMC at iteration ", startIterNum, ". \n", sep = "")
-    } else {
-      stop("Specified a chain ID, but no folder where to find the intermediate results. Remove the chain ID if you want to start the chain from scratch, or specify a value for folderToSaveIntermediateResults in MCMCcontrol. \n")
-    }
-  } else {
-    cat("Launching MCMC... \n")
+  if (length(filesToRestore) == 0) {
+    currentState$logPrior <- sapply(names(logPriorAndTransFunList), FUN = function(paraName) logPriorAndTransFunList[[paraName]]$logPriorFun(.getCurrentState(currentStateVector = currentState, paraName = paraName)))
+    names(currentState$logPrior) <- names(logPriorAndTransFunList)
+    currentState$logPP <- startLogLikValue + sum(currentState$logPrior)
   }
-  cat("Chain is called ", MCMCchainRandomId, ". Specify this string in MCMCcontrol if you want to resume simulations.\n", sep = "")
+  cat("Chain is called ", MCMCcontrol$chainId, ". Specify this string in MCMCcontrol if you want to resume simulations.\n", sep = "")
   cat("Starting values for log-priors: \n")
   print(currentState$logPrior)
   cat("Starting value for log-lik.: \n")
@@ -308,7 +310,7 @@ phylo <- function(edge, edge.length, tip.label, node.label = NULL) {
     if ((MCMCiter %% MCMCcontrol$stepSize) == 0) {
       MCMCcontainer[[MCMCiter/MCMCcontrol$stepSize]] <- currentState
       if (!is.null(MCMCcontrol$folderToSaveIntermediateResults)) {
-        save(currentState, file = paste(MCMCcontrol$folderToSaveIntermediateResults, "/chainID_", MCMCchainRandomId, "_atIter", MCMCiter, ".Rdata", sep = ""), compress = TRUE)
+        save(currentState, file = paste(MCMCcontrol$folderToSaveIntermediateResults, "/chainID_", MCMCcontrol$chainId, "_atIter", MCMCiter, ".Rdata", sep = ""), compress = TRUE)
       }
     }
   }
