@@ -66,9 +66,18 @@ findBayesianClusters <- function(
     startingValues$Lambda <- .genStartCoalescenceRates(startingValues$phyloAndTransTree, control = control)
   } else {
     cat("Restoring chain", control$MCMC.control$chainId, "control parameters... \n", sep = " ")
+    burnin <- control$MCMC.control$burnin
+    n <- control$MCMC.control$n
+    stepSize <- control$MCMC.control$stepSize
+
     filename <- paste(control$MCMC.control$folderToSaveIntermediateResults, "/chain_", control$MCMC.control$chainId, "_controlParameters.Rdata", sep = "")
     evoParsFilename <- paste(control$MCMC.control$folderToSaveIntermediateResults, "/chain_", control$MCMC.control$chainId, "_evoParameters.Rdata", sep = "")
     load(filename) # This will restore "control" to its original values.
+    # The user should be allowed to change these chain parameters, as they do not affect the transitions.
+    if (!is.null(n)) control$MCMC.control$n <- n
+    if (!is.null(burnin)) control$MCMC.control$burnin <- burnin
+    if (!is.null(stepSize)) control$MCMC.control$stepSize <- stepSize
+
     load(evoParsFilename) # This will restore evoParsList.
   }
 
@@ -738,28 +747,9 @@ MCMC.control <- function(n = 1e6, stepSize = 50, burnin = 1e4, seed = 24, folder
   list(value = exp(logNewState), transKernRatio = 1) # The Gaussian transition kernel is symmetrical.
 }
 
-plotTransmissionTree <- function(dualPhyloAndTransmissionTree, plotTipLabels = FALSE, device = jpeg, filename, argsForDevice = list(), argsForPlotPhylo = NULL) {
-  # numTips <- length(dualPhyloAndTransmissionTree$tip.label)
+plotTransmissionTree <- function(dualPhyloAndTransmissionTree, timestamps, plotTipLabels = FALSE, device = jpeg, filename, argsForDevice = list(), argsForPlotPhylo = NULL) {
   transmissionTree <- dualPhyloAndTransmissionTree
   transmissionTree$edge.length <- sapply(transmissionTree$edge.length, function(x) x$transmissionTree)
-  # vertexRegions <- sapply(c(transmissionTree$tip.label, transmissionTree$node.label), function(x) x$region)
-  # branchRegions <- sapply(seq_along(vertexRegions), FUN = function(vertexIndex) {
-  #   updatedRegion <- vertexRegions[[vertexIndex]]
-  #   if (vertexIndex > numTips) {
-  #     if (stringr::str_detect(.getVertexLabel(transmissionTree, vertexIndex)$region, pattern = ",")) {
-  #       vertexSiblings <- phangorn::Siblings(transmissionTree, vertexIndex, include.self = TRUE)
-  #       siblingRegions <- sapply(vertexSiblings, function(x) .getVertexLabel(phylogeny = transmissionTree, vertexNum = x)$region)
-  #       splitRegions <- stringr::str_split(siblingRegions, pattern = ",")
-  #       commonRegion <- Reduce(intersect, splitRegions)
-  #       if (length(commonRegion) == 1) {
-  #         updatedRegion <- commonRegion
-  #       } else {
-  #         updatedRegion <- vertexRegions[[vertexIndex]]
-  #       }
-  #     }
-  #   }
-  #   updatedRegion
-  # })
 
   transmissionTree$node.label <- sapply(transmissionTree$node.label, function(x) x$time)
   transmissionTree$tip.label <- sapply(transmissionTree$tip.label, function(x) {
@@ -768,11 +758,7 @@ plotTransmissionTree <- function(dualPhyloAndTransmissionTree, plotTipLabels = F
     regionLabels <- stringr::str_c("Region = ", x$region)
     stringr::str_c(seqLabels, timeLabels, regionLabels, sep = ", ")
   })
-  # colourScale <- rainbow(n = length(unique(vertexRegions)))
-  # vertexColours <- colourScale[as.numeric(factor(vertexRegions))]
-  # tipColours <- head(vertexColours, n = length(transmissionTree$tip.label))
-  # nodeColours <- tail(vertexColours, n = -length(transmissionTree$tip.label))
-  # do.call(device, args = c(list(filename), argsForDevice))
+
   transmissionTree <- treeio::as.treedata(transmissionTree)
   getNodeEdgeColourLinetypesTibble <- function(dualPhyloObj) {
     nodeEdgeColourLabels <- sapply(seq_along(c(dualPhyloObj$tip.label, dualPhyloObj$node.label)), function(nodeNum) {
@@ -790,12 +776,13 @@ plotTransmissionTree <- function(dualPhyloAndTransmissionTree, plotTipLabels = F
     linetypes <- replace(linetypes, which(nodeEdgeColourLabels["edgeColourLabel", ] == "transition"), 1)
     tibble::tibble(edgeRegion = nodeEdgeColourLabels["edgeColourLabel", ], nodeRegion = nodeEdgeColourLabels["nodeColourLabel", ], transition = as.factor(linetypes), node = as.character(seq_along(linetypes)))
   }
+  maxSamplingDate <- max(timestamps)
+  transmissionTree@phylo$edge.length <- transmissionTree@phylo$edge.length/365 # Time is in days. We need it in years for time-scaled phylogeny.
   transmissionTree@data <- getNodeEdgeColourLinetypesTibble(dualPhyloAndTransmissionTree)
-  plottedTree <- do.call(ggtree::ggtree, args = c(list(tr = transmissionTree, mapping = ggplot2::aes(colour = edgeRegion, linetype = transition)), argsForPlotPhylo)) + ggtree::geom_nodepoint(mapping = aes(colour = nodeRegion), shape = 16, size = 2) + ggtree::geom_tippoint(mapping = aes(colour = nodeRegion), shape = 15, size = 2) + ggplot2::scale_color_discrete(name = "Region") + ggplot2::scale_linetype_discrete(name = "Transition", breaks = c(0, 1), labels = c("No", "Yes"))
+  plottedTree <- do.call(ggtree::ggtree, args = c(list(tr = transmissionTree, mrsd = maxSamplingDate, as.Date = TRUE, mapping = ggplot2::aes(colour = edgeRegion, linetype = transition)), argsForPlotPhylo)) + ggtree::geom_nodepoint(mapping = aes(colour = nodeRegion), shape = 16, size = 2) + ggtree::geom_tippoint(mapping = aes(colour = nodeRegion), shape = 15, size = 2) + ggplot2::scale_color_discrete(name = "Region") + ggplot2::scale_linetype_discrete(name = "Transition", breaks = c(0, 1), labels = c("No", "Yes")) + ggtree::theme_tree2()
   if (plotTipLabels) {
     plottedTree <- plottedTree + ggtree::geom_tiplab()
   }
   do.call(ggtree::ggsave, c(list(filename = filename, plot = plottedTree), argsForDevice))
-  # dev.off()
   NULL
 }
