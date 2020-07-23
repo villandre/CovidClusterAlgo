@@ -738,28 +738,28 @@ MCMC.control <- function(n = 1e6, stepSize = 50, burnin = 1e4, seed = 24, folder
   list(value = exp(logNewState), transKernRatio = 1) # The Gaussian transition kernel is symmetrical.
 }
 
-plotTransmissionTree <- function(dualPhyloAndTransmissionTree, device = jpeg, filename, argsForDevice = list(), argsForPlotPhylo = list(show.tip.label = TRUE, edge.width = 2)) {
-  numTips <- length(dualPhyloAndTransmissionTree$tip.label)
+plotTransmissionTree <- function(dualPhyloAndTransmissionTree, plotTipLabels = FALSE, device = jpeg, filename, argsForDevice = list(), argsForPlotPhylo = NULL) {
+  # numTips <- length(dualPhyloAndTransmissionTree$tip.label)
   transmissionTree <- dualPhyloAndTransmissionTree
   transmissionTree$edge.length <- sapply(transmissionTree$edge.length, function(x) x$transmissionTree)
-  vertexRegions <- sapply(c(transmissionTree$tip.label, transmissionTree$node.label), function(x) x$region)
-  branchRegions <- sapply(seq_along(vertexRegions), FUN = function(vertexIndex) {
-    updatedRegion <- vertexRegions[[vertexIndex]]
-    if (vertexIndex > numTips) {
-      if (stringr::str_detect(.getVertexLabel(transmissionTree, vertexIndex)$region, pattern = ",")) {
-        vertexSiblings <- phangorn::Siblings(transmissionTree, vertexIndex, include.self = TRUE)
-        siblingRegions <- sapply(vertexSiblings, function(x) .getVertexLabel(phylogeny = transmissionTree, vertexNum = x)$region)
-        splitRegions <- stringr::str_split(siblingRegions, pattern = ",")
-        commonRegion <- Reduce(intersect, splitRegions)
-        if (length(commonRegion) == 1) {
-          updatedRegion <- commonRegion
-        } else {
-          updatedRegion <- vertexRegions[[vertexIndex]]
-        }
-      }
-    }
-    updatedRegion
-  })
+  # vertexRegions <- sapply(c(transmissionTree$tip.label, transmissionTree$node.label), function(x) x$region)
+  # branchRegions <- sapply(seq_along(vertexRegions), FUN = function(vertexIndex) {
+  #   updatedRegion <- vertexRegions[[vertexIndex]]
+  #   if (vertexIndex > numTips) {
+  #     if (stringr::str_detect(.getVertexLabel(transmissionTree, vertexIndex)$region, pattern = ",")) {
+  #       vertexSiblings <- phangorn::Siblings(transmissionTree, vertexIndex, include.self = TRUE)
+  #       siblingRegions <- sapply(vertexSiblings, function(x) .getVertexLabel(phylogeny = transmissionTree, vertexNum = x)$region)
+  #       splitRegions <- stringr::str_split(siblingRegions, pattern = ",")
+  #       commonRegion <- Reduce(intersect, splitRegions)
+  #       if (length(commonRegion) == 1) {
+  #         updatedRegion <- commonRegion
+  #       } else {
+  #         updatedRegion <- vertexRegions[[vertexIndex]]
+  #       }
+  #     }
+  #   }
+  #   updatedRegion
+  # })
 
   transmissionTree$node.label <- sapply(transmissionTree$node.label, function(x) x$time)
   transmissionTree$tip.label <- sapply(transmissionTree$tip.label, function(x) {
@@ -768,11 +768,34 @@ plotTransmissionTree <- function(dualPhyloAndTransmissionTree, device = jpeg, fi
     regionLabels <- stringr::str_c("Region = ", x$region)
     stringr::str_c(seqLabels, timeLabels, regionLabels, sep = ", ")
   })
-  reorderedEdgeRegions <- branchRegions[transmissionTree$edge[ , 2]]
-  colourScale <- viridis::viridis(n = length(unique(branchRegions)))
-  edgeColours <- colourScale[as.numeric(factor(reorderedEdgeRegions))]
-  do.call(device, args = c(list(filename), argsForDevice))
-  do.call(plot, args = c(list(x = transmissionTree, edge.color = edgeColours), argsForPlotPhylo))
-  dev.off()
+  # colourScale <- rainbow(n = length(unique(vertexRegions)))
+  # vertexColours <- colourScale[as.numeric(factor(vertexRegions))]
+  # tipColours <- head(vertexColours, n = length(transmissionTree$tip.label))
+  # nodeColours <- tail(vertexColours, n = -length(transmissionTree$tip.label))
+  # do.call(device, args = c(list(filename), argsForDevice))
+  transmissionTree <- treeio::as.treedata(transmissionTree)
+  getNodeEdgeColourLinetypesTibble <- function(dualPhyloObj) {
+    nodeEdgeColourLabels <- sapply(seq_along(c(dualPhyloObj$tip.label, dualPhyloObj$node.label)), function(nodeNum) {
+      if (nodeNum == ape::Ntip(dualPhyloObj) + 1) return(rep(dualPhyloObj$node.label[[1]]$region, 2))
+      parentNode <- phangorn::Ancestors(x = dualPhyloObj, node = nodeNum, type = "parent")
+      parentRegion <- .getVertexLabel(dualPhyloObj, parentNode)$region
+      currentRegion <- .getVertexLabel(dualPhyloObj, nodeNum)$region
+      colourLabel <- currentRegion
+      if (!identical(parentRegion, currentRegion)) {
+        colourLabel <- "transition"
+      }
+      c(edgeColourLabel = colourLabel, nodeColourLabel = currentRegion)
+    })
+    linetypes <- rep(0, ncol(nodeEdgeColourLabels))
+    linetypes <- replace(linetypes, which(nodeEdgeColourLabels["edgeColourLabel", ] == "transition"), 1)
+    tibble::tibble(edgeRegion = nodeEdgeColourLabels["edgeColourLabel", ], nodeRegion = nodeEdgeColourLabels["nodeColourLabel", ], transition = as.factor(linetypes), node = as.character(seq_along(linetypes)))
+  }
+  transmissionTree@data <- getNodeEdgeColourLinetypesTibble(dualPhyloAndTransmissionTree)
+  plottedTree <- do.call(ggtree::ggtree, args = c(list(tr = transmissionTree, mapping = ggplot2::aes(colour = edgeRegion, linetype = transition)), argsForPlotPhylo)) + ggtree::geom_nodepoint(mapping = aes(colour = nodeRegion), shape = 16, size = 2) + ggtree::geom_tippoint(mapping = aes(colour = nodeRegion), shape = 15, size = 2) + ggplot2::scale_color_discrete(name = "Region") + ggplot2::scale_linetype_discrete(name = "Transition", breaks = c(0, 1), labels = c("No", "Yes"))
+  if (plotTipLabels) {
+    plottedTree <- plottedTree + ggtree::geom_tiplab()
+  }
+  do.call(ggtree::ggsave, c(list(filename = filename, plot = plottedTree), argsForDevice))
+  # dev.off()
   NULL
 }
