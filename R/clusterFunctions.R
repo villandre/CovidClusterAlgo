@@ -64,6 +64,10 @@ findBayesianClusters <- function(
     startingValues$phyloAndTransTree <- .genStartDualPhyloAndTransTree(phylogeny = startingValuePhylo, seqsTimestampsPOSIXct = seqsTimestampsPOSIXct, seqsRegionStamps = seqsRegionStamps, mutationRate = mutationRate, control = control$controlForGenStartTransmissionTree)
 
     startingValues$Lambda <- .genStartCoalescenceRates(startingValues$phyloAndTransTree, control = control)
+    if (!is.null(control$MCMC.control$folderToSaveIntermediateResults)) {
+      startingValuesFilename <- paste(control$MCMC.control$folderToSaveIntermediateResults, "/chain_", control$MCMC.control$chainId, "_startingValues.Rdata", sep = "")
+      save(startingValues, file = startingValuesFilename)
+    }
   } else {
     cat("Restoring chain", control$MCMC.control$chainId, "control parameters... \n", sep = " ")
     burnin <- control$MCMC.control$burnin
@@ -72,6 +76,7 @@ findBayesianClusters <- function(
 
     filename <- paste(control$MCMC.control$folderToSaveIntermediateResults, "/chain_", control$MCMC.control$chainId, "_controlParameters.Rdata", sep = "")
     evoParsFilename <- paste(control$MCMC.control$folderToSaveIntermediateResults, "/chain_", control$MCMC.control$chainId, "_evoParameters.Rdata", sep = "")
+    startingValuesFilename <- paste(control$MCMC.control$folderToSaveIntermediateResults, "/chain_", control$MCMC.control$chainId, "_startingValues.Rdata", sep = "")
     load(filename) # This will restore "control" to its original values.
     # The user should be allowed to change these chain parameters, as they do not affect the transitions.
     if (!is.null(n)) control$MCMC.control$n <- n
@@ -79,6 +84,7 @@ findBayesianClusters <- function(
     if (!is.null(stepSize)) control$MCMC.control$stepSize <- stepSize
 
     load(evoParsFilename) # This will restore evoParsList.
+    load(startingValuesFilename) # This will restore startingValues.
   }
 
   sampledTreesWithPP <- .optimTreeMCMC(
@@ -152,7 +158,9 @@ presetPML <- function(phyloObj, phyDatObj, evoParsList) {
       sapply(unresolvedChildrenIndices, recursiveFunction)
     }
     childNodeTimes <- sapply(childrenIndices, FUN = function(x) .getVertexLabel(phylogeny = transmissionTree, vertexNum = x)$time)
-    topNodeTime <- min(childNodeTimes) - control$startTransTreeBranchLength + rnorm(1, mean = 0, sd = 1e-10) # The jittering ensure that coalescence events do not happen simultaneously.
+    transBranchLength <- mean(sapply(childrenIndices, function(childIndex) phylogeny$edge.length[match(childIndex, phylogeny$edge[ , 2])]))/mutationRate
+    if (transBranchLength == 0) transBranchLength <- 1
+    topNodeTime <- min(childNodeTimes) - transBranchLength + rnorm(1, mean = 0, sd = 1e-10) # The jittering ensures that coalescence events do not happen simultaneously.
     transmissionTree$node.label[[nodeIndex - numTips]]$time <<- topNodeTime
     NULL
   }
