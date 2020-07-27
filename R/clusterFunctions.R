@@ -794,3 +794,30 @@ plotTransmissionTree <- function(dualPhyloAndTransmissionTree, timestamps, plotT
   do.call(ggtree::ggsave, c(list(filename = filename, plot = plottedTree), argsForDevice))
   NULL
 }
+
+getRegionClusters <- function(dualPhyloAndTransTree, clusterCountryCode) {
+  clusterIndices <- rep(0, ape::Ntip(dualPhyloAndTransTree))
+  vertexProcessed <- rep(FALSE, ape::Nedge(dualPhyloAndTransTree) + 1)
+  clusterCode <- 1
+  assignClusterIndex <- function(vertexIndex, clusterIndex) {
+    vertexProcessed[[vertexIndex]] <<- TRUE
+    if (identical(.getVertexLabel(dualPhyloAndTransTree, vertexIndex)$region, clusterCountryCode)) {
+      if (vertexIndex > ape::Ntip(dualPhyloAndTransTree)) {
+        childrenIndices <- phangorn::Children(dualPhyloAndTransTree, vertexIndex)
+        sapply(childrenIndices, assignClusterIndex, clusterIndex = clusterIndex)
+      } else {
+        clusterIndices[[vertexIndex]] <<- clusterIndex
+      }
+    }
+    NULL
+  }
+  outerClusterAssignment <- function(vertexIndex) {
+    if (!vertexProcessed[[vertexIndex]] & identical(.getVertexLabel(dualPhyloAndTransTree, vertexIndex)$region, clusterCountryCode)) {
+      assignClusterIndex(vertexIndex, clusterCode)
+      clusterCode <<- clusterCode + 1
+    }
+    NULL
+  }
+  sapply((ape::Ntip(dualPhyloAndTransTree) + 1):(ape::Nedge(dualPhyloAndTransTree) + 1), outerClusterAssignment)
+  clusterIndices
+}
