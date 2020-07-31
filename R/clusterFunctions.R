@@ -383,7 +383,9 @@ MCMC.control <- function(n = 1e6, stepSize = 50, burnin = 1e4, seed = 24, folder
 
 .convertToTransTree <- function(dualPhyloAndTransTree) {
   transmissionTree <- dualPhyloAndTransTree
-  transmissionTree$edge.length <- sapply(dualPhyloAndTransTree$edge.length, '[[', "transmissionTree")
+  if (length(transmissionTree$edge.length[[1]]) > 1) {
+    transmissionTree$edge.length <- sapply(dualPhyloAndTransTree$edge.length, '[[', "transmissionTree")
+  }
   transmissionTree
 }
 
@@ -755,9 +757,8 @@ MCMC.control <- function(n = 1e6, stepSize = 50, burnin = 1e4, seed = 24, folder
   list(value = exp(logNewState), transKernRatio = 1) # The Gaussian transition kernel is symmetrical.
 }
 
-plotTransmissionTree <- function(dualPhyloAndTransmissionTree, timestamps, plotTipLabels = FALSE, device = jpeg, filename, argsForDevice = list(), argsForPlotPhylo = NULL) {
-  transmissionTree <- dualPhyloAndTransmissionTree
-  transmissionTree$edge.length <- sapply(transmissionTree$edge.length, function(x) x$transmissionTree)
+plotTransmissionTree <- function(dualPhyloAndTransmissionTree, timestamps, plotTipLabels = FALSE, plotTitle = NULL, device = jpeg, filename, argsForDevice = list(), argsForPlotPhylo = NULL) {
+  transmissionTree <- .convertToTransTree(dualPhyloAndTransmissionTree)
 
   transmissionTree$node.label <- sapply(transmissionTree$node.label, function(x) x$time)
   transmissionTree$tip.label <- sapply(transmissionTree$tip.label, function(x) {
@@ -791,6 +792,9 @@ plotTransmissionTree <- function(dualPhyloAndTransmissionTree, timestamps, plotT
   if (plotTipLabels) {
     plottedTree <- plottedTree + ggtree::geom_tiplab()
   }
+  if (!is.null(plotTitle)) {
+    plottedTree <- plottedTree + ggplot2::ggtitle(plotTitle)
+  }
   do.call(ggtree::ggsave, c(list(filename = filename, plot = plottedTree), argsForDevice))
   NULL
 }
@@ -798,26 +802,111 @@ plotTransmissionTree <- function(dualPhyloAndTransmissionTree, timestamps, plotT
 getRegionClusters <- function(dualPhyloAndTransTree, clusterCountryCode) {
   clusterIndices <- rep(0, ape::Ntip(dualPhyloAndTransTree))
   vertexProcessed <- rep(FALSE, ape::Nedge(dualPhyloAndTransTree) + 1)
-  clusterCode <- 1
-  assignClusterIndex <- function(vertexIndex, clusterIndex) {
-    vertexProcessed[[vertexIndex]] <<- TRUE
-    if (identical(.getVertexLabel(dualPhyloAndTransTree, vertexIndex)$region, clusterCountryCode)) {
-      if (vertexIndex > ape::Ntip(dualPhyloAndTransTree)) {
-        childrenIndices <- phangorn::Children(dualPhyloAndTransTree, vertexIndex)
-        sapply(childrenIndices, assignClusterIndex, clusterIndex = clusterIndex)
-      } else {
-        clusterIndices[[vertexIndex]] <<- clusterIndex
+  clusterNumber <- 0
+  outerFindDescendants <- function(vertexIndex) {
+    innerFindDescendants <- function(vertexIndex) {
+      vertexProcessed[[vertexIndex]] <<- TRUE
+      vertexCountry <- .getVertexLabel(dualPhyloAndTransTree, vertexIndex)$region
+      if (vertexCountry == clusterCountryCode) {
+        if (vertexIndex <= ape::Ntip(dualPhyloAndTransTree)) {
+          clusterIndices[[vertexIndex]] <<- clusterNumber
+        } else {
+          childrenVertices <- phangorn::Children(dualPhyloAndTransTree, vertexIndex)
+          sapply(childrenVertices, innerFindDescendants)
+        }
       }
+      NULL
     }
-    NULL
-  }
-  outerClusterAssignment <- function(vertexIndex) {
     if (!vertexProcessed[[vertexIndex]] & identical(.getVertexLabel(dualPhyloAndTransTree, vertexIndex)$region, clusterCountryCode)) {
-      assignClusterIndex(vertexIndex, clusterCode)
-      clusterCode <<- clusterCode + 1
+      clusterNumber <<- clusterNumber + 1
+      innerFindDescendants(vertexIndex)
+    }
+
+    if (vertexIndex > ape::Ntip(dualPhyloAndTransTree)) {
+      childrenVertices <- phangorn::Children(dualPhyloAndTransTree, vertexIndex)
+      sapply(childrenVertices, outerFindDescendants)
     }
     NULL
   }
-  sapply((ape::Ntip(dualPhyloAndTransTree) + 1):(ape::Nedge(dualPhyloAndTransTree) + 1), outerClusterAssignment)
+  outerFindDescendants(ape::Ntip(dualPhyloAndTransTree) + 1)
   clusterIndices
+}
+
+.plotTransmissionTree.control <- function(plotTipLabels = TRUE, device = "pdf", filename = filename, argsForDevice = list(), argsForPlotPhylo = NULL) {
+  list(plotTipLabels = plotTipLabels, device = device, argsForDevice = argsForDevice, argsForPlotPhylo = argsForPlotPhylo)
+}
+
+plotClusters <- function(dualPhyloAndTransTree, timestamps, clusterCountryCode, minClusterSize = 5, folderName, controlListForPlotTransmissionTree = list()) {
+  regionClusters <- getRegionClusters(dualPhyloAndTransTree = dualPhyloAndTransTree, clusterCountryCode)
+  clusterSizes <- table(regionClusters)
+  clusterSizes <- clusterSizes[-1] # First element in the table is for unclustered sequences
+  keepClusterNumbers <- as.numeric(names(clusterSizes)[clusterSizes >= minClusterSize])
+  pruneFunction <- function(treeObj) {
+    newTreeObj <- treeObj
+    repeat {
+      vertexVec <- ape::Ntip(newTreeObj) + 1
+      repeat {
+        currentVertex <- vertexVec[[1]]
+        region <- .getVertexLabel(newTreeObj, currentVertex)$region
+        if (!identical(region, clusterCountryCode)) break
+
+        childrenVertices <- NULL
+        if (currentVertex > ape::Ntip(newTreeObj)) {
+          childrenVertices <- phangorn::Children(newTreeObj, currentVertex)
+          childrenVertices <- childrenVertices[childrenVertices > ape::Ntip(newTreeObj)]
+        }
+        vertexVec <- c(vertexVec[-1], childrenVertices)
+        if (length(vertexVec) == 0) break
+      }
+      if (length(vertexVec) == 0) break
+      newTreeObj <- prune.tree(newTreeObj, currentVertex)
+    }
+    newTreeObj
+  }
+
+  getClusterTree <- function(clusterNumber) {
+    tipNums <- which(regionClusters == clusterNumber)
+    mrcaNum <- ape::getMRCA(dualPhyloAndTransTree, tipNums)
+    subTree <- ape::extract.clade(dualPhyloAndTransTree, mrcaNum)
+    pruneFunction(subTree)
+  }
+  controlArgsForPlotTransmissionTree <- do.call(.plotTransmissionTree.control, controlListForPlotTransmissionTree)
+  clusterTrees <- lapply(keepClusterNumbers, FUN = getClusterTree)
+  filenames <- paste(folderName, "/cluster", keepClusterNumbers, ".", controlArgsForPlotTransmissionTree$device, sep = "")
+  plotNames <- paste(clusterCountryCode, ": cluster ", keepClusterNumbers, sep = "")
+
+  plotFunction <- function(treeObj, filename, plotTitle) {
+    do.call(plotTransmissionTree, args = c(list(dualPhyloAndTransmissionTree = treeObj, timestamps = timestamps, filename = filename, plotTitle = plotTitle), controlArgsForPlotTransmissionTree))
+    NULL
+  }
+  lapply(seq_along(clusterTrees), FUN = function(clusterIndex) {
+    plotFunction(clusterTrees[[clusterIndex]], filename = filenames[[clusterIndex]], plotTitle = plotNames[[clusterIndex]])
+    invisible(NULL)
+  })
+  invisible(NULL)
+}
+
+prune.tree <- function(phylogeny, node) {
+  if (node <= ape::Ntip(phylogeny)) return(phylogeny)
+  if (node == ape::Ntip(phylogeny) + 1) stop("Can't prune the tree at the root level! \n")
+
+  verticesToRemove <- Descendants(x = phylogeny, node = node, type = "all")
+  tipsToRemove <- verticesToRemove[verticesToRemove <= ape::Ntip(phylogeny)]
+  newNumTips <- ape::Ntip(phylogeny) - length(tipsToRemove) + 1
+  nodesToRemove <- c(verticesToRemove[verticesToRemove > ape::Ntip(phylogeny)], node) # node has to be removed too, as it becomes a tip.
+  edgesToRemove <- match(verticesToRemove, phylogeny$edge[ , 2])
+  nodeLabelToTransform <- .getVertexLabel(phylogeny =  phylogeny, vertexNum = node)
+  if (is.null(nodeLabelToTransform)) {
+    nodeLabelToTransform <- NA
+  }
+  untailoredEdgeMat <- phylogeny$edge[-edgesToRemove, ]
+  matchVec <- 1:length(unique(as.vector(untailoredEdgeMat)))
+  names(matchVec) <- as.character(sort(unique(as.vector(untailoredEdgeMat)))) # The node at which the pruning is done should be a tip. It follows that it should map to newNumTips, and all values greater than that should be incremented by one.
+  matchVec[(matchVec >= newNumTips) & (matchVec < matchVec[[as.character(node)]])] <- matchVec[(matchVec >= newNumTips) & (matchVec < matchVec[[as.character(node)]])] + 1
+  matchVec[[as.character(node)]] <- newNumTips
+  edgeMat <- matrix(matchVec[as.character(untailoredEdgeMat)], ncol = 2)
+  tipLabels <- c(phylogeny$tip.label[-tipsToRemove], list(nodeLabelToTransform))
+  nodeLabels <- phylogeny$node.label[-(nodesToRemove - ape::Ntip(phylogeny))]
+  edgeLengths <- phylogeny$edge.length[-edgesToRemove]
+  phylo(edge = edgeMat, tip.label = tipLabels, node.label = nodeLabels, edge.length = edgeLengths)
 }
