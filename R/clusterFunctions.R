@@ -4,6 +4,7 @@
 #'
 #' @param DNAbinData DNAbin object, the sequencing data,
 #' @param rootSequenceName Name of the sequence used to root the tree, has to match a name in DNAbinData
+#' @param clusterRegion optional string indicating region for which clusters should be computed; if left NULL, only chain results are returned
 #' @param covariateFrame (ignored for now) data.frame containing covariate values in the order of elements in DNAbinData, used for scoring sample partitions
 #' @param seqsTimestampsPOSIXct named vector of sequence collection times, with names matching sequence names in DNAbinData
 #' @param seqsRegionStamps named vector of region labels for sequences, with names matching sequence names in DNAbinData
@@ -13,13 +14,17 @@
 #' @param clusterScoringFun (ignored for now) function with four arguments (in order): cluster labels (numeric), phylogeny (phylo) genotyping data (DNAbin), covariate information (data.frame).
 #' @param control List of control parameters, cf. findBayesianClusters.control
 #'
-#' @details By default, the function uses phangorn::pml to compute log-likelihoods, and phangorn::optim.pml to obtain a starting value for the phylogeny. The function then fixes the evolutionary parameters at their ML value. derives starting values for the phylogeny. The user can input their own phylogenetic likelihood function with control$logLikFun. In that case however, values will also have to be provided for startingValuesPhylo and evoParsList.
+#' @details By default, the function uses `phangorn::pml` to compute log-likelihoods, and `phangorn::optim.pml` to obtain a starting value for the phylogeny. The function then fixes the evolutionary parameters at their ML value. The user can input their own phylogenetic likelihood function with `control$logLikFun`. In that case however, values will also have to be provided for `startingValuesPhylo` and `evoParsList`.
 #'
-#' We strongly recommend setting control$MCMC.control$folderToSaveIntermediateResults. Running a reasonably long chain on a sample of a moderate size, e.g. 2,000, will take a number of days: that option allows the user to interrupt and resume a run. Each chain is assigned a glyph: its' value is specified in the function's printout, e.g.
+#' We strongly recommend setting `control$MCMC.control$folderToSaveIntermediateResults`. Running a reasonably long chain on a sample of a moderate size, e.g. 2,000, will take at least a number of days: that option allows the user to interrupt and resume a run. Each chain is assigned a glyph: its value is specified in the function's printout, e.g.
 #' "Chain is called Ph9t7z. Specify this string in MCMC.control if you want to resume simulations."
 #'
-#' @return A list with as many elements as control$MCMC.control$n/control$MCMC.control$stepSize
+#' You can find cluster estimates from any tree in `chain` and for any region by using the `getRegionClusters` function.
 #'
+#' @return A list with two elements
+#' \itemize{
+#' \item{`chain`}{list giving the thinned chain results,}
+#' \item{`MAPclusters`}{vector giving the cluster membership indices for sequences in region clusterRegion based on the maximum posterior probability tree; a 0 indicates that a sequence is not in that region.}
 #' }
 #'
 #' @examples
@@ -31,6 +36,7 @@
 findBayesianClusters <- function(
   DNAbinData,
   rootSequenceName,
+  clusterRegion = NULL,
   covariateFrame = NULL,
   seqsTimestampsPOSIXct,
   seqsRegionStamps = rep(1, ifelse(is.matrix(DNAbinData), nrow(DNAbinData), length(DNAbinData))),
@@ -97,7 +103,12 @@ findBayesianClusters <- function(
     mutationRate = mutationRate,
     control = control)
   # .clusterFun(MCMCoutput = sampledTreesWithPP, clusterScoringFun = control$clusterScoringFun)
-  sampledTreesWithPP
+  clusterValues <- NULL
+  if (!is.null(clusterRegion)) {
+    logPPvalues <- sapply(sampledTreesWithPP, FUN = "[[", "logPP")
+    clusterValues <- getRegionClusters(dualPhyloAndTransTree = sampledTreesWithPP[[which.max(logPPvalues)]]$paraValues$phyloAndTransTree, clusterRegionCode = clusterRegion)
+  }
+  list(chain = sampledTreesWithPP, MAPclusters = clusterValues)
 }
 
 .performBasicChecks <- function() {
@@ -119,7 +130,7 @@ findBayesianClusters <- function(
 #'
 #' }
 #'
-
+#' @export
 findBayesianClusters.control <- function(
   logLikFun = presetPML,
   numMigrationsPoissonPriorMean = 1,
@@ -373,10 +384,10 @@ phylo <- function(edge, edge.length, tip.label, node.label = NULL) {
 #'
 #' @details You should not need to call this function directly: it is merely a convenient and formal way to let users know how the MCMC run can be customised.
 #' @return A list of control parameters
-#'
+#' @examples \dontrun{
+#'  MCMC.control(n = 1e6, stepSize = 100, burnin = 1e5)
 #' }
-#'
-
+#' @export
 MCMC.control <- function(n = 2e5, stepSize = 50, burnin = 1e4, folderToSaveIntermediateResults = NULL, chainId = NULL, coalRateKernelSD = 0.5, print.frequency = 10, phyloBranchLengthsDeflateCoef = 0.98, propPhyloBranchesToModify = 0.1, transTreeTuningPara = 0.1, propTransTreeBranchesToModify = 0.1) {
   list(n = n, stepSize = stepSize, burnin = burnin, folderToSaveIntermediateResults = folderToSaveIntermediateResults, chainId = chainId, coalRateKernelSD = coalRateKernelSD, print.frequency = print.frequency, phyloBranchLengthsDeflateCoef = phyloBranchLengthsDeflateCoef, propPhyloBranchesToModify = propPhyloBranchesToModify, transTreeTuningPara = transTreeTuningPara, propTransTreeBranchesToModify = propTransTreeBranchesToModify)
 }
@@ -838,7 +849,22 @@ plotTransmissionTree <- function(dualPhyloAndTransmissionTree, timestamps, plotT
   NULL
 }
 
-getRegionClusters <- function(dualPhyloAndTransTree, clusterCountryCode) {
+#' Returns region-specific clusters
+#'
+#' Returns region-specific transmission clusters from a tree, with a cluster defined as the largest set of cases registered in a certain region descended from the same introduction of the pathogen.
+#'
+#' @param dualPhyloAndTransTree `phylo`-like object found in `paraValues$phyloAndTransTree` in the `chain` element of the `findBayesianClusters` output
+#' @param clusterRegionCode string indicating for which region cluster estimates should be produced
+#'
+#' @details Note that clusters are not clades, as they exclude tips descended from the a cluster's MRCA that do not have the right regional label.
+#' @return A numeric vector, with a $0$ indicating that the sequence does not belong to the identified region.
+#' @examples \dontrun{
+#' TO_DO
+#' }
+#'
+#'@export
+
+getRegionClusters <- function(dualPhyloAndTransTree, clusterRegionCode) {
   clusterIndices <- rep(0, ape::Ntip(dualPhyloAndTransTree))
   vertexProcessed <- rep(FALSE, ape::Nedge(dualPhyloAndTransTree) + 1)
   clusterNumber <- 0
@@ -846,7 +872,7 @@ getRegionClusters <- function(dualPhyloAndTransTree, clusterCountryCode) {
     innerFindDescendants <- function(vertexIndex) {
       vertexProcessed[[vertexIndex]] <<- TRUE
       vertexCountry <- .getVertexLabel(dualPhyloAndTransTree, vertexIndex)$region
-      if (vertexCountry == clusterCountryCode) {
+      if (vertexCountry == clusterRegionCode) {
         if (vertexIndex <= ape::Ntip(dualPhyloAndTransTree)) {
           clusterIndices[[vertexIndex]] <<- clusterNumber
         } else {
@@ -856,7 +882,7 @@ getRegionClusters <- function(dualPhyloAndTransTree, clusterCountryCode) {
       }
       NULL
     }
-    if (!vertexProcessed[[vertexIndex]] & identical(.getVertexLabel(dualPhyloAndTransTree, vertexIndex)$region, clusterCountryCode)) {
+    if (!vertexProcessed[[vertexIndex]] & identical(.getVertexLabel(dualPhyloAndTransTree, vertexIndex)$region, clusterRegionCode)) {
       clusterNumber <<- clusterNumber + 1
       innerFindDescendants(vertexIndex)
     }
@@ -875,8 +901,8 @@ getRegionClusters <- function(dualPhyloAndTransTree, clusterCountryCode) {
   list(plotTipLabels = plotTipLabels, device = device, argsForDevice = argsForDevice, argsForPlotPhylo = argsForPlotPhylo)
 }
 
-plotClusters <- function(dualPhyloAndTransTree, chainID = NULL, timestamps, clusterCountryCode, minClusterSize = 5, folderName, controlListForPlotTransmissionTree = list()) {
-  regionClusters <- getRegionClusters(dualPhyloAndTransTree = dualPhyloAndTransTree, clusterCountryCode)
+plotClusters <- function(dualPhyloAndTransTree, chainID = NULL, timestamps, clusterRegionCode, minClusterSize = 5, folderName, controlListForPlotTransmissionTree = list()) {
+  regionClusters <- getRegionClusters(dualPhyloAndTransTree = dualPhyloAndTransTree, clusterRegionCode)
   clusterSizes <- table(regionClusters)
   clusterSizes <- clusterSizes[-1] # First element in the table is for unclustered sequences
   keepClusterNumbers <- as.numeric(names(clusterSizes)[clusterSizes >= minClusterSize])
@@ -887,7 +913,7 @@ plotClusters <- function(dualPhyloAndTransTree, chainID = NULL, timestamps, clus
       repeat {
         currentVertex <- vertexVec[[1]]
         region <- .getVertexLabel(newTreeObj, currentVertex)$region
-        if (!identical(region, clusterCountryCode)) break
+        if (!identical(region, clusterRegionCode)) break
 
         childrenVertices <- NULL
         if (currentVertex > ape::Ntip(newTreeObj)) {
@@ -912,7 +938,7 @@ plotClusters <- function(dualPhyloAndTransTree, chainID = NULL, timestamps, clus
   controlArgsForPlotTransmissionTree <- do.call(.plotTransmissionTree.control, controlListForPlotTransmissionTree)
   clusterTrees <- lapply(keepClusterNumbers, FUN = getClusterTree)
   filenames <- paste(folderName, "/cluster", keepClusterNumbers, "_chainID", chainID, ".", controlArgsForPlotTransmissionTree$device, sep = "")
-  plotNames <- paste(clusterCountryCode, ": cluster ", keepClusterNumbers, sep = "")
+  plotNames <- paste(clusterRegionCode, ": cluster ", keepClusterNumbers, sep = "")
 
   plotFunction <- function(treeObj, filename, plotTitle) {
     do.call(plotTransmissionTree, args = c(list(dualPhyloAndTransmissionTree = treeObj, timestamps = timestamps, filename = filename, plotTitle = plotTitle), controlArgsForPlotTransmissionTree))
@@ -924,6 +950,24 @@ plotClusters <- function(dualPhyloAndTransTree, chainID = NULL, timestamps, clus
   })
   invisible(NULL)
 }
+
+#' Prunes a phylogeny
+#'
+#' Prunes a phylo object at the node whose number is given by node
+#'
+#' @param phylogeny phylo object
+#' @param node node number at which the tree should be pruned, must be greater than the number of tips in the tree plus one,
+#'
+#' @details The function transforms the selected node into a tip whose label will be NA, unless node.label is specified. Note that entering node = ape::Ntip(phylogeny) + 1 will produce an error, as it involves pruning the tree at the root.
+#' @return A phylo object
+#' @examples \dontrun{
+#' set.seed(10)
+#' aPhylo <- rtree(10)
+#' prunedPhylo <- prune.tree(aPhylo, 12)
+#' plot(prunedPhylo)
+#' }
+#'
+#'@export
 
 prune.tree <- function(phylogeny, node) {
   if (node <= ape::Ntip(phylogeny)) return(phylogeny)
