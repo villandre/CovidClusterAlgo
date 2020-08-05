@@ -3,22 +3,23 @@
 #' The function uses MCMC to produce cluster estimates based on sequencing data and covariate information. The function automatically derives suitable starting values for all parameters.
 #'
 #' @param DNAbinData DNAbin object, the sequencing data,
-#' @param covariateFrame A data.frame containing covariate values in the order of elements in DNAbinData.
-#' @param branchLengthPriorsFun A function with one argument, a scalar indicating the actual branch length, specifying the prior distribution for the branch lengths.
-#' @param evoParsPriorsFun A function with one argument, a numeric vector with named elements if priors vary among *log-evolutionary parameters*, can be left blank if fixEvoPars is set to TRUE in 'control'.
-#' @param clusterScoringFun A function with four arguments (in order): cluster labels (numeric), phylogeny (phylo) genotyping data (DNAbin), covariate information (data.frame).
+#' @param rootSequenceName Name of the sequence used to root the tree, has to match a name in DNAbinData
+#' @param covariateFrame (ignored for now) data.frame containing covariate values in the order of elements in DNAbinData, used for scoring sample partitions
+#' @param seqsTimestampsPOSIXct named vector of sequence collection times, with names matching sequence names in DNAbinData
+#' @param seqsRegionStamps named vector of region labels for sequences, with names matching sequence names in DNAbinData
+#' @param mutationRate fixed mutation rate in nucleotide substitution per site per year
+#' @param startingValuePhylo (optional) phylo object, starting value for the phylogeny
+#' @param evoParsList (optional) list of values for the evolutionary parameters used in the likelihood function specified in control$logLikFun, see for example ?ape::pml
+#' @param clusterScoringFun (ignored for now) function with four arguments (in order): cluster labels (numeric), phylogeny (phylo) genotyping data (DNAbin), covariate information (data.frame).
 #' @param control List of control parameters, cf. findBayesianClusters.control
 #'
-#' @details Spatial coordinates must use the longitude/latitude ("+proj=longlat +datum=WGS84 +no_defs +ellps=WGS84 +towgs84=0,0,0") or sinusoidal ("+proj=sinu +lon_0=0 +x_0=0 +y_0=0 +R=6371007.181 +units=m +no_defs") projection. In the latter case, they will be automatically converted to the lon./lat. projection.
+#' @details By default, the function uses phangorn::pml to compute log-likelihoods, and phangorn::optim.pml to obtain a starting value for the phylogeny. The function then fixes the evolutionary parameters at their ML value. derives starting values for the phylogeny. The user can input their own phylogenetic likelihood function with control$logLikFun. In that case however, values will also have to be provided for startingValuesPhylo and evoParsList.
 #'
-#' Some of the control parameters should be tuned to ensure better computational or predictive performance, or to make it possible to stop and resume model fitting. See INLAMRA.control.
+#' We strongly recommend setting control$MCMC.control$folderToSaveIntermediateResults. Running a reasonably long chain on a sample of a moderate size, e.g. 2,000, will take a number of days: that option allows the user to interrupt and resume a run. Each chain is assigned a glyph: its' value is specified in the function's printout, e.g.
+#' "Chain is called Ph9t7z. Specify this string in MCMC.control if you want to resume simulations."
 #'
+#' @return A list with as many elements as control$MCMC.control$n/control$MCMC.control$stepSize
 #'
-#' @return A list with three components:
-#' \itemize{
-#'  \item{hyperMarginalMoments} {A data.frame giving the mean, and standard deviation of the marginal log-hyperparameter posteriors, as well as their 95\% credible intervals. Note that the scaling of the time hyperparameters depends on the provided time values. If they are inputted as POSIX* objects, time hyperparameters will relate to time measured in days. If they are inputted as numeric, the original scale is used instead.}
-#'  \item{FEmarginalMoments} {A data.frame giving the mean and standard deviation of the marginal fixed effects posteriors, as well as their 95\% credibility intervals.}
-#'  \item{predMoments} {A data.frame with two columns, Mean and SD. The order of the predictions matches the one in predCovariateFrame.}
 #' }
 #'
 #' @examples
@@ -35,11 +36,11 @@ findBayesianClusters <- function(
   seqsRegionStamps = rep(1, ifelse(is.matrix(DNAbinData), nrow(DNAbinData), length(DNAbinData))),
   mutationRate,
   startingValuePhylo = NULL,
-  rootTimeLogPriorFunction = NULL,
   evoParsList = NULL,
   clusterScoringFun = NULL,
   control = list()) {
   # .performBasicChecks()
+  mutationRate <- mutationRate/365 # Time is expressed in days in the code, whereas mutationRate is expressed in substitutions per site per *year*.
 
   if (is.null(control$numMigrationsPoissonPriorMean)) {
     control$numMigrationsPoissonPriorMean <- length(unique(seqsRegionStamps)) - 1 # We prefer transmission trees with only one introduction per region; the -1 is for the outgroup, which starts off with a region without an introduction.
@@ -48,7 +49,7 @@ findBayesianClusters <- function(
   # The "edge.length" component of "phylogeny" is a list containing branch lengths for both the transmission tree and phylogeny.
   if (is.null(control$MCMC.control$folderToSaveIntermediateResults) | is.null(control$MCMC.control$chainId)) {
     control <- do.call('findBayesianClusters.control', control)
-    control$MCMC.control$chainId <- stringi::stri_rand_strings(1, 6) # This should really be different every time, hence its position before set.seed.
+    control$MCMC.control$chainId <- stringi::stri_rand_strings(1, 6)
     if (is.null(startingValuePhylo)) {
       MLphyloAndEvoPars <- .genMLphyloAndEvoPars(DNAbinData, rootSequenceName)
       startingValuePhylo <- MLphyloAndEvoPars$phylogeny
@@ -103,6 +104,22 @@ findBayesianClusters <- function(
 
 }
 
+#' Control parameters for findBayesianClusters
+#'
+#' Control parameters for findBayesianClusters
+#'
+#' @param logLikFun function producing the phylogenetic log-likelihood, cf. presetPML for default values
+#' @param numMigrationsPoissonPriorMean Mean of the Poisson distribution used to penalise for the number of clusters in the sample
+#' @param MCMC.control control parameters for the MCMC run, cf. ?MCMC.control
+#' @param transTreeCondOnPhylo Determines the factorisation of the posterior distribution; when TRUE, the transmission tree branch length prior is conditional on phylogenetic branch lengths,
+#' @param controlForGenStartTransmissionTree (not used for now) control parameters for the function producing a starting value for the transmission tree.
+#'
+#' @details You should not need to call this function directly: it is merely a convenient and formal way to let users know how the function behaviour can be customised
+#' @return A list of control parameters for findBayesianClusters.
+#'
+#' }
+#'
+
 findBayesianClusters.control <- function(
   logLikFun = presetPML,
   numMigrationsPoissonPriorMean = 1,
@@ -133,8 +150,8 @@ presetPML <- function(phyloObj, phyDatObj, evoParsList) {
   list(phylogeny = optimisedPhylo$tree, evoParsList = list(Q = optimisedPhylo$Q, bf = optimisedPhylo$bf, gammaShape = optimisedPhylo$shape, propInv = optimisedPhylo$inv, ncat = optimisedPhylo$k))
 }
 
-.controlForGenStartTransmissionTree <- function(startTransTreeBranchLength = 1/24) {
-  list(startTransTreeBranchLength = startTransTreeBranchLength)
+.controlForGenStartTransmissionTree <- function() {
+  list()
 }
 
 .genStartDualPhyloAndTransTree <- function(phylogeny, seqsTimestampsPOSIXct, seqsRegionStamps, mutationRate, control) {
@@ -280,7 +297,7 @@ phylo <- function(edge, edge.length, tip.label, node.label = NULL) {
     names(currentState$logPrior) <- names(logPriorAndTransFunList)
     currentState$logPP <- startLogLikValue + sum(currentState$logPrior)
   }
-  cat("Chain is called ", MCMCcontrol$chainId, ". Specify this string in MCMCcontrol if you want to resume simulations.\n", sep = "")
+  cat("Chain is called ", MCMCcontrol$chainId, ". Specify this string in MCMC.control if you want to resume simulations.\n", sep = "")
   cat("Starting values for log-priors: \n")
   print(currentState$logPrior)
   cat("Starting value for log-lik.: \n")
@@ -338,8 +355,30 @@ phylo <- function(edge, edge.length, tip.label, node.label = NULL) {
   MCMCcontainer[elementsToKeep]
 }
 
-MCMC.control <- function(n = 1e6, stepSize = 50, burnin = 1e4, seed = 24, folderToSaveIntermediateResults = NULL, save.frequency = 100, chainId = NULL, coalRateKernelSD = 0.5, print.frequency = 10, phyloBranchLengthsDeflateCoef = 0.98, propPhyloBranchesToModify = 0.1, transTreeTuningPara = 0.1, propTransTreeBranchesToModify = 0.2) {
-  list(n = n, stepSize = stepSize, burnin = burnin, seed = seed, folderToSaveIntermediateResults = folderToSaveIntermediateResults, chainId = chainId, coalRateKernelSD = coalRateKernelSD, print.frequency = print.frequency, save.frequency = save.frequency, phyloBranchLengthsDeflateCoef = phyloBranchLengthsDeflateCoef, propPhyloBranchesToModify = propPhyloBranchesToModify, transTreeTuningPara = transTreeTuningPara, propTransTreeBranchesToModify = propTransTreeBranchesToModify)
+#' Control parameters for the MCMC run
+#'
+#' Control parameters for the MCMC run.
+#'
+#' @param n total number of iterations after the burn-in
+#' @param stepSize frequency at which iterations are kept in memory, relates to thinning, e.g. stepSize = 100 means that the returned chain will comprise iterations 100, 200, 300, after the burn-in
+#' @param burnin number of iterations to discard at the start of the chain
+#' @param folderToSaveIntermediateResults folder where intermediate chain results are saved, used to allow chains to be interrupted/resumed
+#' @param chainId glyph program previously assigned a chain, used to resume a chain, can be found in the printed output of findBayesianClusters after "Launching MCMC..."
+#' @param coalRateKernelSD tuning parameter for the Gaussian coalescence rates transition kernel
+#' @param print.frequency number indicating at which interval the program prints information on the chain
+#' @param phyloBranchLengthsDeflateCoef number between 0 and 1, tuning parameter for the phylogenetic branch lengths transition kernel, a lower value translates to larger variations, and a lower acceptance rate in the chain
+#' @param propPhyloBranchesToModify number between 0 and 1, proportion of branches that are modified by the transition kernel every iteration
+#' @param transTreeTuningPara tuning parameter for the transmission tree transition kernel, determines the boundaries of the uniform density used to propose new branch lengths in the transmission tree; a higher value leads to larger steps, and a lower acceptance rate
+#' @param propTransTreeBranchesToModify like propPhyloBranchesToModify, but for the transmission tree
+#'
+#' @details You should not need to call this function directly: it is merely a convenient and formal way to let users know how the MCMC run can be customised.
+#' @return A list of control parameters
+#'
+#' }
+#'
+
+MCMC.control <- function(n = 2e5, stepSize = 50, burnin = 1e4, folderToSaveIntermediateResults = NULL, chainId = NULL, coalRateKernelSD = 0.5, print.frequency = 10, phyloBranchLengthsDeflateCoef = 0.98, propPhyloBranchesToModify = 0.1, transTreeTuningPara = 0.1, propTransTreeBranchesToModify = 0.1) {
+  list(n = n, stepSize = stepSize, burnin = burnin, folderToSaveIntermediateResults = folderToSaveIntermediateResults, chainId = chainId, coalRateKernelSD = coalRateKernelSD, print.frequency = print.frequency, phyloBranchLengthsDeflateCoef = phyloBranchLengthsDeflateCoef, propPhyloBranchesToModify = propPhyloBranchesToModify, transTreeTuningPara = transTreeTuningPara, propTransTreeBranchesToModify = propTransTreeBranchesToModify)
 }
 
 .getCurrentState <- function(currentStateVector, paraName = c("topology", "b", "l", "Lambda")) {
@@ -836,7 +875,7 @@ getRegionClusters <- function(dualPhyloAndTransTree, clusterCountryCode) {
   list(plotTipLabels = plotTipLabels, device = device, argsForDevice = argsForDevice, argsForPlotPhylo = argsForPlotPhylo)
 }
 
-plotClusters <- function(dualPhyloAndTransTree, timestamps, clusterCountryCode, minClusterSize = 5, folderName, controlListForPlotTransmissionTree = list()) {
+plotClusters <- function(dualPhyloAndTransTree, chainID = NULL, timestamps, clusterCountryCode, minClusterSize = 5, folderName, controlListForPlotTransmissionTree = list()) {
   regionClusters <- getRegionClusters(dualPhyloAndTransTree = dualPhyloAndTransTree, clusterCountryCode)
   clusterSizes <- table(regionClusters)
   clusterSizes <- clusterSizes[-1] # First element in the table is for unclustered sequences
@@ -872,7 +911,7 @@ plotClusters <- function(dualPhyloAndTransTree, timestamps, clusterCountryCode, 
   }
   controlArgsForPlotTransmissionTree <- do.call(.plotTransmissionTree.control, controlListForPlotTransmissionTree)
   clusterTrees <- lapply(keepClusterNumbers, FUN = getClusterTree)
-  filenames <- paste(folderName, "/cluster", keepClusterNumbers, ".", controlArgsForPlotTransmissionTree$device, sep = "")
+  filenames <- paste(folderName, "/cluster", keepClusterNumbers, "_chainID", chainID, ".", controlArgsForPlotTransmissionTree$device, sep = "")
   plotNames <- paste(clusterCountryCode, ": cluster ", keepClusterNumbers, sep = "")
 
   plotFunction <- function(treeObj, filename, plotTitle) {
