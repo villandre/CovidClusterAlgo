@@ -730,9 +730,9 @@ MCMC.control <- function(n = 2e5, stepSize = 50, burnin = 1e4, folderToSaveInter
     transTreeBranchLength <- dualPhyloAndTransTree$edge.length[[branchIndex]]$transmissionTree
 
     if (identical(phyloBranchLength, 0)) {
-      logProb <- dexp(transTreeBranchLength, rate = mutationRate/2, log = TRUE)
+      logProb <- dexp(transTreeBranchLength, rate = 2 * mutationRate * numSites, log = TRUE)
     } else {
-      logProb <- dexp(transTreeBranchLength, rate = mutationRate * numSites, log = TRUE)
+      logProb <- dexp(transTreeBranchLength, rate = mutationRate/phyloBranchLength, log = TRUE)
     }
     logProb
   }
