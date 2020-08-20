@@ -236,6 +236,7 @@ presetPML <- function(phyloObj, phyDatObj, evoParsList) {
   numWithinCoalescenceEvents <- rowSums(sapply(seq_along(transmissionTree$node.label) + length(dualPhyloAndTransTree$tip.label), getCoalVec))
 
   startWithin <- numWithinCoalescenceEvents/(sum(transmissionTree$edge.length) * length(regionNames))
+  startWithin <- replace(startWithin, which(startWithin == 0), min(startWithin[startWithin > 0])) # Coalescence rates of 0 could create issues down the line.
   names(startWithin) <- regionNames
 
   funForOptim <- function(x) {
@@ -312,9 +313,10 @@ phylo <- function(edge, edge.length, tip.label, node.label = NULL) {
   # Functions are defined here with an external dependence on currentState, but this is voluntary.
   logPriorAndTransFunList <- list(
     topology = list(
-      logPriorFun = function(x) {
-        .topologyLogPriorFun(dualPhyloAndTransTree = x, Lambda = currentState$paraValues$Lambda, numMigrationsPoissonPriorMean = control$numMigrationsPoissonPriorMean, estRootTime = estRootTime)
-        },
+      # logPriorFun = function(x) {
+      #   .topologyLogPriorFun(dualPhyloAndTransTree = x, Lambda = currentState$paraValues$Lambda, numMigrationsPoissonPriorMean = control$numMigrationsPoissonPriorMean, estRootTime = estRootTime)
+      #   },
+      logPriorFun = function(x, Lambda = currentState$paraValues$Lambda) .topologyLogPriorFun(dualPhyloAndTransTree = x, Lambda = Lambda, numMigrationsPoissonPriorMean = control$numMigrationsPoissonPriorMean, estRootTime = estRootTime),
       transFun = .topologyTransFun),
     b = list(
       logPriorFun = bLogPrior,
@@ -326,15 +328,13 @@ phylo <- function(edge, edge.length, tip.label, node.label = NULL) {
       logPriorFun = .coalescenceRatesLogPriorFun,
       transFun = function(x) .coalescenceRatesTransFun(x, sd = MCMCcontrol$coalRateKernelSD)))
   if (!control$fixedClockRate) {
-      logPriorAndTransFunList <-
-        c(logPriorAndTransFunList,
-          xi = list(
-            logPriorFun = function(x) {
-              .clockRatesLogPrior(x = x, meanValue = perSiteClockRate, variance = perSiteClockRate)
-            },
-            transFun = function(x) {
-              .clockRatesTransFun(x = x, meanValue = perSiteClockRate, variance = perSiteClockRate, propToModify = MCMCcontrol$propClockRatesToModify)
-              }))
+      logPriorAndTransFunList$xi <- list(
+        logPriorFun = function(x) {
+          .clockRatesLogPrior(x = x, meanValue = perSiteClockRate, variance = perSiteClockRate)
+        },
+        transFun = function(x) {
+          .clockRatesTransFun(x = x, meanValue = perSiteClockRate, variance = perSiteClockRate, propToModify = MCMCcontrol$propClockRatesToModify)
+        })
   }
   if (length(filesToRestore) == 0) {
     currentState$logPrior <- sapply(names(logPriorAndTransFunList), FUN = function(paraName) logPriorAndTransFunList[[paraName]]$logPriorFun(.getCurrentState(currentStateVector = currentState, paraName = paraName)))
@@ -1032,11 +1032,9 @@ prune.tree <- function(phylogeny, node) {
   phylo(edge = edgeMat, tip.label = tipLabels, node.label = nodeLabels, edge.length = edgeLengths)
 }
 
+# Time values are not restricted to positive. POSIXct sets January 1st 1970 as time 0.
 .rootTimeLogPriorFun <- function(x, meanValue, variance = 196) {
-  # Method-of-moments estimates (default sd is two weeks, i.e. 14 days)
-  shapePar <- meanValue^2/variance
-  scalePar <- variance/meanValue
-  dgamma(x = x, shape = shapePar, scale = scalePar, log = TRUE)
+  dnorm(x = x, mean = meanValue, sd = sqrt(variance), log = TRUE)
 }
 
 # We pick a log-normal prior on the original scale because we would like the prior on the log-scale to be normal.
