@@ -1045,10 +1045,8 @@ prune.tree <- function(phylogeny, node) {
 }
 
 .clockRatesTransFun <- function(x, meanValue, variance, propToModify = 0.01) {
-  mu <- log(meanValue^2/sqrt(variance + meanValue^2))
-  sigmaSq <- log(variance/meanValue^2 + 1)
   numToModify <- ceiling(propToModify * length(x))
   posToModify <- sample.int(n = length(x), size = numToModify, replace = FALSE)
-  newValues <- rlnorm(n = numToModify, meanlog = mu, sdlog = sqrt(sigmaSq))
+  newValues <- exp(rnorm(n = numToModify, mean = log(x), sd = log(2))) # HARD-CODED: FIX THIS.
   list(value = replace(x, list = posToModify, values = newValues), transKernRatio = 1)
 }
