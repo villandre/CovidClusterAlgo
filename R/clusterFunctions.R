@@ -80,7 +80,7 @@ findBayesianClusters <- function(
     startingValues$Lambda <- .genStartCoalescenceRates(startingValues$phyloAndTransTree, estRootTime = estRootTime, control = control)
     if (!control$fixedClockRate) {
       numRepeats <- ifelse(control$strictClockModel, 1, length(startingValues$phyloAndTransTree$edge.length))
-      startingValues$xi <- rep(perSiteClockRate, n = numRepeats)
+      startingValues$xi <- rep(perSiteClockRate, numRepeats)
     }
     if (!is.null(control$MCMC.control$folderToSaveIntermediateResults)) {
       startingValuesFilename <- paste(control$MCMC.control$folderToSaveIntermediateResults, "/chain_", control$MCMC.control$chainId, "_startingValues.Rdata", sep = "")
