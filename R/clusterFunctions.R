@@ -292,7 +292,7 @@ phylo <- function(edge, edge.length, tip.label, node.label = NULL) {
     phyloObj <- .convertToPhylo(startingValues$phyloAndTransTree)
     startLogLikValue <- logLikFun(phyloObj, phyDatData, evoParsList)
 
-    currentState <- list(paraValues = startingValues, logLik = startLogLikValue)
+    currentState <- lapply(1:MCMCcontrol$nChains, function(x) list(paraValues = startingValues, logLik = startLogLikValue)) # All chains start in the same state.
     startIterNum <- 1
     cat("Launching MCMC... \n")
   }
@@ -303,6 +303,7 @@ phylo <- function(edge, edge.length, tip.label, node.label = NULL) {
     if (control$fixedClockRate) {
       lLogPrior <- function(x) .transTreeBranchLengthsConditionalLogPrior(dualPhyloAndTransTree = x, perSiteClockRate = perSiteClockRate, numSites = ncol(DNAbinData))
     } else {
+      stop("You set fixedClockRate = FALSE. Yet another unimplemented feature. Message package maintainer to complain. Stopping... \n")
       lLogPrior <- function(x) .transTreeBranchLengthsConditionalLogPrior(dualPhyloAndTransTree = x, perSiteClockRate = currentState$paraValues$xi, numSites = ncol(DNAbinData))
     }
   } else {
@@ -316,87 +317,116 @@ phylo <- function(edge, edge.length, tip.label, node.label = NULL) {
       # logPriorFun = function(x) {
       #   .topologyLogPriorFun(dualPhyloAndTransTree = x, Lambda = currentState$paraValues$Lambda, numMigrationsPoissonPriorMean = control$numMigrationsPoissonPriorMean, estRootTime = estRootTime)
       #   },
-      logPriorFun = function(x, Lambda = currentState$paraValues$Lambda) .topologyLogPriorFun(dualPhyloAndTransTree = x, Lambda = Lambda, numMigrationsPoissonPriorMean = control$numMigrationsPoissonPriorMean, estRootTime = estRootTime),
+      logPriorFun = lapply(1:MCMCcontrol$nChains, FUN = function(chainNum) {
+        function(x, Lambda = currentState[[chainNum]]$paraValues$Lambda) {
+          .topologyLogPriorFun(dualPhyloAndTransTree = x, Lambda = Lambda, numMigrationsPoissonPriorMean = control$numMigrationsPoissonPriorMean, estRootTime = estRootTime)
+        }
+      }),
       transFun = .topologyTransFun),
     b = list(
-      logPriorFun = bLogPrior,
+      logPriorFun = lapply(1:MCMCcontrol$nChains, FUN = function(x) bLogPrior),
       transFun = function(x) .phyloBranchLengthsTransFun(x, deflateCoef = MCMCcontrol$phyloBranchLengthsDeflateCoef, propToModify = MCMCcontrol$propPhyloBranchesToModify)),
     l = list(
-      logPriorFun = lLogPrior,
+      logPriorFun = lapply(1:MCMCcontrol$nChains, FUN = function(x) lLogPrior),
       transFun = function(x) .transTreeBranchLengthsTransFun(dualPhyloAndTransTree = x, tuningPara = MCMCcontrol$transTreeTuningPara, propToModify = MCMCcontrol$propTransTreeBranchesToModify)),
     Lambda = list(
-      logPriorFun = .coalescenceRatesLogPriorFun,
+      logPriorFun = lapply(1:MCMCcontrol$nChains, FUN = function(x) .coalescenceRatesLogPriorFun),
       transFun = function(x) .coalescenceRatesTransFun(x, sd = MCMCcontrol$coalRateKernelSD)))
   if (!control$fixedClockRate) {
       logPriorAndTransFunList$xi <- list(
-        logPriorFun = function(x) {
-          .clockRatesLogPrior(x = x, meanValue = perSiteClockRate, variance = perSiteClockRate)
-        },
+        logPriorFun = lapply(1:MCMCcontrol$nChains, FUN = function(y) {
+          function(x) {
+            .clockRatesLogPrior(x = x, meanValue = perSiteClockRate, variance = perSiteClockRate)
+          }
+        }),
         transFun = function(x) {
           .clockRatesTransFun(x = x, meanValue = perSiteClockRate, variance = perSiteClockRate, propToModify = MCMCcontrol$propClockRatesToModify)
         })
   }
-  if (length(filesToRestore) == 0) {
-    currentState$logPrior <- sapply(names(logPriorAndTransFunList), FUN = function(paraName) logPriorAndTransFunList[[paraName]]$logPriorFun(.getCurrentState(currentStateVector = currentState, paraName = paraName)))
-    names(currentState$logPrior) <- names(logPriorAndTransFunList)
-    currentState$logPP <- startLogLikValue + sum(currentState$logPrior)
+  if (length(filesToRestore) == 0) { # New chains...
+    logPriorValue <- sapply(names(logPriorAndTransFunList), FUN = function(paraName) logPriorAndTransFunList[[paraName]]$logPriorFun[[1]](.getCurrentState(currentStateVector = currentState, paraName = paraName)))
+    names(logPriorValue) <- names(logPriorAndTransFunList)
+    currentState <- lapply(1:MCMCcontrol$nChains, function(chainNum) {
+      currentState[[chainNum]]$logPrior <- logPriorValue
+      currentState[[chainNum]]$logPP <- startLogLikValue + sum(currentState[[chainNum]]$logPrior)
+      currentState[[chainNum]]
+    })
   }
   cat("Chain is called ", MCMCcontrol$chainId, ". Specify this string in MCMC.control if you want to resume simulations.\n", sep = "")
   cat("Starting values for log-priors: \n")
-  print(currentState$logPrior)
+  print(currentState[[1]]$logPrior) # "1" is the cold chain
   cat("Starting value for log-lik.: \n")
-  print(currentState$logLik)
-  for (MCMCiter in startIterNum:(MCMCcontrol$n + MCMCcontrol$burnin)) {
-    if ((MCMCiter %% MCMCcontrol$print.frequency) == 0) cat("This is MCMC iteration ", MCMCiter, sep = "", ".\n")
-    for (paraName in names(logPriorAndTransFunList)) {
-      proposalValueAndTransKernRatio <- logPriorAndTransFunList[[paraName]]$transFun(.getCurrentState(currentState, paraName))
-      updatedLogPrior <- currentState$logPrior
-      updatedLogPrior[[paraName]] <- logPriorAndTransFunList[[paraName]]$logPriorFun(proposalValueAndTransKernRatio$value)
-      updatedDualTree <- .getCurrentState(currentState, "topology")
-      updatedLogLik <- currentState$logLik
+  print(currentState[[1]]$logLik) # "1" is the cold chain
 
-      if (paraName %in% c("topology", "b")) {
-        updatedDualTree <- proposalValueAndTransKernRatio$value
-        updatedLogLik <- logLikFun(.convertToPhylo(updatedDualTree), phyDatData, evoParsList)
-      } else if (paraName == "l") { # The prior for 'b' is conditioned on 'l'.
-        updatedDualTree <- proposalValueAndTransKernRatio$value
-        updatedLogPrior[["topology"]] <- logPriorAndTransFunList[["topology"]]$logPriorFun(updatedDualTree)
-        updatedLogPrior[["b"]] <- logPriorAndTransFunList[["b"]]$logPriorFun(updatedDualTree)
-      } else if (paraName == "Lambda") {
-        updatedLogPrior[["topology"]] <- logPriorAndTransFunList[["topology"]]$logPriorFun(updatedDualTree, Lambda = proposalValueAndTransKernRatio$value)
-      }
-      proposalLogPP <- updatedLogLik + sum(updatedLogPrior)
-      MHratio <- proposalValueAndTransKernRatio$transKernRatio * exp(proposalLogPP - currentState$logPP)
-      if (runif(1) <= MHratio) {
-        # if (paraName == "b") cat("Modified phylo. branch lengths! \n")
-        # if (paraName == "l") cat("Modified trans. tree branch lengths! \n")
-        # cat("Move accepted! Parameter name: ", paraName, "\n", sep = "")
-        # cat("Updated log-priors: \n")
-        # print(updatedLogPrior)
-        # cat("Updated log-lik.: \n")
-        # cat(updatedLogLik)
-        if (paraName %in% c("topology", "l", "b")) {
-          currentState$paraValues$phyloAndTransTree <- updatedDualTree
-        } else {
-          currentState$paraValues[[paraName]] <- proposalValueAndTransKernRatio$value
+  clusterAddress <- parallel::makeForkCluster(nnodes = MCMCcontrol$nChains)
+  numSweeps <- ceiling((MCMCcontrol$n - startIterNum)/MCMCcontrol$nIterPerSweep)
+  lapply(1:numSweeps, FUN = function(sweepNum) {
+    currentState <- parallel::parLapply(1:MCMCcontrol$Nchain, cl = clusterAddress, FUN = function(chainNumber) {
+      chainState <- currentState[[chainNumber]]
+      # for (MCMCiter in 1:(MCMCcontrol$n + MCMCcontrol$burnin)) {
+      for (MCMCiter in 1:MCMCcontrol$numIterPerSweep) {
+        # if ((MCMCiter %% MCMCcontrol$print.frequency) == 0) cat("This is MCMC iteration ", MCMCiter, sep = "", ".\n")
+        for (paraName in names(logPriorAndTransFunList)) {
+          proposalValueAndTransKernRatio <- logPriorAndTransFunList[[paraName]]$transFun(.getCurrentState(chainState, paraName))
+          updatedLogPrior <- chainState$logPrior
+          updatedLogPrior[[paraName]] <- logPriorAndTransFunList[[paraName]]$logPriorFun[[chainNumber]](proposalValueAndTransKernRatio$value)
+          updatedDualTree <- .getCurrentState(chainState, "topology")
+          updatedLogLik <- chainState$logLik
+
+          if (paraName %in% c("topology", "b")) {
+            updatedDualTree <- proposalValueAndTransKernRatio$value
+            updatedLogLik <- logLikFun(.convertToPhylo(updatedDualTree), phyDatData, evoParsList)
+          } else if (paraName == "l") { # The prior for 'b' is conditioned on 'l'.
+            updatedDualTree <- proposalValueAndTransKernRatio$value
+            updatedLogPrior[["topology"]] <- logPriorAndTransFunList[["topology"]]$logPriorFun[[chainNumber]](updatedDualTree)
+            updatedLogPrior[["b"]] <- logPriorAndTransFunList[["b"]]$logPriorFun(updatedDualTree)
+          } else if (paraName == "Lambda") {
+            updatedLogPrior[["topology"]] <- logPriorAndTransFunList[["topology"]]$logPriorFun[[chainNumber]](updatedDualTree, Lambda = proposalValueAndTransKernRatio$value)
+          }
+          proposalLogPP <- updatedLogLik + sum(updatedLogPrior)
+          MHratio <- proposalValueAndTransKernRatio$transKernRatio * exp(1/MCMCcontrol$temperatureParFun(chainNumber) * (proposalLogPP - chainState$logPP))
+          if (runif(1) <= MHratio) {
+            if (paraName %in% c("topology", "l", "b")) {
+              chainState$paraValues$phyloAndTransTree <- updatedDualTree
+            } else {
+              chainState$paraValues[[paraName]] <- proposalValueAndTransKernRatio$value
+            }
+            chainState$logLik <- updatedLogLik
+            chainState$logPrior <- updatedLogPrior
+            chainState$logPP <- proposalLogPP
+          }
         }
-        currentState$logLik <- updatedLogLik
-        currentState$logPrior <- updatedLogPrior
-        currentState$logPP <- proposalLogPP
+      }
+      chainState
+    })
+    # Processing exchanges between chains...
+    for (k in 1:(MCMCcontrol$numChains - 1)) {
+      logDenom <- 1/MCMCcontrol$temperatureParFun(k) * currentState[[k]]$logPP + 1/(k + 1) * currentState[[k+1]]$logPP
+      logNumer <- 1/MCMCcontrol$temperatureParFun(k+1) * currentState[[k]]$logPP + 1/MCMCcontrol$temperatureParFun(k) * currentState[[k+1]]$logPP
+      swapRatio <- exp(logNumer - logDenom)
+      if (runif(1) < swapRatio) {
+        currentState[c(k, k+1)] <- currentState[c(k+1, k)]
       }
     }
-    if ((MCMCiter %% MCMCcontrol$stepSize) == 0) {
-      MCMCcontainer[[MCMCiter/MCMCcontrol$stepSize]] <- currentState
-      if (!is.null(MCMCcontrol$folderToSaveIntermediateResults)) {
-        save(currentState, file = paste(MCMCcontrol$folderToSaveIntermediateResults, "/chainID_", MCMCcontrol$chainId, "_atIter", MCMCiter, ".Rdata", sep = ""), compress = TRUE)
+
+    # if ((MCMCiter %% MCMCcontrol$stepSize) == 0) {
+    MCMCcontainer[[sweepNum]] <- currentState
+    if (!is.null(MCMCcontrol$folderToSaveIntermediateResults)) {
+      save(currentState, file = paste(MCMCcontrol$folderToSaveIntermediateResults, "/chainID_", MCMCcontrol$chainId, "_atIter", MCMCiter, ".Rdata", sep = ""), compress = TRUE)
       }
-    }
-  }
+    # }
+  })
   cat("MCMC complete. Finalising... \n")
-  elementsToKeep <- seq(
-    from = floor(MCMCcontrol$burnin/MCMCcontrol$stepSize) + 1,
-    to = floor((MCMCcontrol$burnin + MCMCcontrol$n)/MCMCcontrol$stepSize))
-  MCMCcontainer[elementsToKeep]
+  lastIterToDrop <- floor(MCMCcontrol$burnin/MCMCcontrol$nIterPerSweep)
+  elementsToDrop <- 0
+  if (lastIterToDrop > 0) {
+    elementsToDrop <- 1:lastIterToDrop
+  }
+
+  # elementsToKeep <- seq(
+  #   from = floor(MCMCcontrol$burnin/MCMCcontrol$stepSize) + 1,
+  #   to = floor((MCMCcontrol$burnin + MCMCcontrol$n)/MCMCcontrol$stepSize))
+  lapply(MCMCcontainer[-elementsToDrop], '[[', 1) # We only keep the cold chain.
 }
 
 #' Control parameters for the MCMC run
@@ -421,21 +451,19 @@ phylo <- function(edge, edge.length, tip.label, node.label = NULL) {
 #'  MCMC.control(n = 1e6, stepSize = 100, burnin = 1e5)
 #' }
 #' @export
-MCMC.control <- function(n = 2e5, stepSize = 50, burnin = 1e4, folderToSaveIntermediateResults = NULL, chainId = NULL, coalRateKernelSD = 0.5, print.frequency = 10, phyloBranchLengthsDeflateCoef = 0.98, propPhyloBranchesToModify = 0.1, transTreeTuningPara = 0.1, propTransTreeBranchesToModify = 0.1, propClockRatesToModify = 0.1) {
-  list(n = n, stepSize = stepSize, burnin = burnin, folderToSaveIntermediateResults = folderToSaveIntermediateResults, chainId = chainId, coalRateKernelSD = coalRateKernelSD, print.frequency = print.frequency, phyloBranchLengthsDeflateCoef = phyloBranchLengthsDeflateCoef, propPhyloBranchesToModify = propPhyloBranchesToModify, transTreeTuningPara = transTreeTuningPara, propTransTreeBranchesToModify = propTransTreeBranchesToModify, propClockRatesToModify = propClockRatesToModify)
+MCMC.control <- function(n = 2e5, nIterPerSweep = 100, nChains = 1, temperatureParFun = function(x) x, stepSize = 50, burnin = 1e4, folderToSaveIntermediateResults = NULL, chainId = NULL, coalRateKernelSD = 0.5, print.frequency = 10, phyloBranchLengthsDeflateCoef = 0.98, propPhyloBranchesToModify = 0.1, transTreeTuningPara = 0.1, propTransTreeBranchesToModify = 0.1, propClockRatesToModify = 0.1) {
+  if (temperatureParFun(1) != 1) {
+    stop("temperatureParFun(1) must return '1' as it is for the cold chain! Please fix this (or leave the default value) and re-run the code. \n")
+  }
+  if (nChains == 1) {
+    nIterPerSweep <- stepSize
+  }
+  list(n = n, nIterPerSweep = nIterPerSweep, nChains = nChains, temperatureParFun = temperatureParFun, stepSize = stepSize, burnin = burnin, folderToSaveIntermediateResults = folderToSaveIntermediateResults, chainId = chainId, coalRateKernelSD = coalRateKernelSD, print.frequency = print.frequency, phyloBranchLengthsDeflateCoef = phyloBranchLengthsDeflateCoef, propPhyloBranchesToModify = propPhyloBranchesToModify, transTreeTuningPara = transTreeTuningPara, propTransTreeBranchesToModify = propTransTreeBranchesToModify, propClockRatesToModify = propClockRatesToModify)
 }
 
 .getCurrentState <- function(currentStateVector, paraName = c("topology", "b", "l", "Lambda")) {
   if (paraName %in% c("topology", "b", "l")) return(currentStateVector$paraValues$phyloAndTransTree)
   currentStateVector$paraValues[[paraName]]
-}
-
-.clusterFun <- function(MCMCoutput, clusterScoringFun) {
-
-}
-
-.defaultClusterScoringFun <- function(x, genotypingData, phylogeny, covariateFrame) {
-
 }
 
 .topologyTransFun <- function(dualPhyloAndTransTree) {
