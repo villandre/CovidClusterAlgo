@@ -60,18 +60,20 @@ findBayesianClusters <- function(
   }
   startingValues <- list()
   # The "edge.length" component of "phylogeny" is a list containing branch lengths for both the transmission tree and phylogeny.
-  if (is.null(control$MCMC.control$folderToSaveIntermediateResults) | is.null(control$MCMC.control$chainId)) {
+  chainId <- control$MCMC.control$chainId
+  if (is.null(control$MCMC.control$folderToSaveIntermediateResults) | is.null(chainId)) {
     control <- do.call('findBayesianClusters.control', control)
-    control$MCMC.control$chainId <- stringi::stri_rand_strings(1, 6)
+    # control$MCMC.control$chainId <- stringi::stri_rand_strings(1, 6)
+    chainId <- stringi::stri_rand_strings(1, 6)
     if (is.null(startingValuePhylo)) {
       MLphyloAndEvoPars <- .genMLphyloAndEvoPars(DNAbinData, rootSequenceName)
       startingValuePhylo <- MLphyloAndEvoPars$phylogeny
       if (is.null(evoParsList)) evoParsList <- MLphyloAndEvoPars$evoParsList
     }
     if (!is.null(control$MCMC.control$folderToSaveIntermediateResults)) {
-      filename <- paste(control$MCMC.control$folderToSaveIntermediateResults, "/chain_", control$MCMC.control$chainId, "_controlParameters.Rdata", sep = "")
+      filename <- paste(control$MCMC.control$folderToSaveIntermediateResults, "/chain_", chainId, "_controlParameters.Rdata", sep = "")
       save(control, file = filename)
-      evoParsFilename <- paste(control$MCMC.control$folderToSaveIntermediateResults, "/chain_", control$MCMC.control$chainId, "_evoParameters.Rdata", sep = "")
+      evoParsFilename <- paste(control$MCMC.control$folderToSaveIntermediateResults, "/chain_", chainId, "_evoParameters.Rdata", sep = "")
       save(evoParsList, file = evoParsFilename)
     }
 
@@ -83,18 +85,18 @@ findBayesianClusters <- function(
       startingValues$xi <- rep(perSiteClockRate, numRepeats)
     }
     if (!is.null(control$MCMC.control$folderToSaveIntermediateResults)) {
-      startingValuesFilename <- paste(control$MCMC.control$folderToSaveIntermediateResults, "/chain_", control$MCMC.control$chainId, "_startingValues.Rdata", sep = "")
+      startingValuesFilename <- paste(control$MCMC.control$folderToSaveIntermediateResults, "/chain_", chainId, "_startingValues.Rdata", sep = "")
       save(startingValues, file = startingValuesFilename)
     }
   } else {
-    cat("Restoring chain", control$MCMC.control$chainId, "control parameters... \n", sep = " ")
+    cat("Restoring chain", chainId, "control parameters... \n", sep = " ")
     burnin <- control$MCMC.control$burnin
     n <- control$MCMC.control$n
     stepSize <- control$MCMC.control$stepSize
 
-    filename <- paste(control$MCMC.control$folderToSaveIntermediateResults, "/chain_", control$MCMC.control$chainId, "_controlParameters.Rdata", sep = "")
-    evoParsFilename <- paste(control$MCMC.control$folderToSaveIntermediateResults, "/chain_", control$MCMC.control$chainId, "_evoParameters.Rdata", sep = "")
-    startingValuesFilename <- paste(control$MCMC.control$folderToSaveIntermediateResults, "/chain_", control$MCMC.control$chainId, "_startingValues.Rdata", sep = "")
+    filename <- paste(control$MCMC.control$folderToSaveIntermediateResults, "/chain_", chainId, "_controlParameters.Rdata", sep = "")
+    evoParsFilename <- paste(control$MCMC.control$folderToSaveIntermediateResults, "/chain_", chainId, "_evoParameters.Rdata", sep = "")
+    startingValuesFilename <- paste(control$MCMC.control$folderToSaveIntermediateResults, "/chain_", chainId, "_startingValues.Rdata", sep = "")
     load(filename) # This will restore "control" to its original values.
     # The user should be allowed to change these chain parameters, as they do not affect the transitions.
     if (!is.null(n)) control$MCMC.control$n <- n
@@ -107,6 +109,7 @@ findBayesianClusters <- function(
 
   sampledTreesWithPP <- .optimTreeMCMC(
     startingValues = startingValues,
+    chainId = chainId,
     logLikFun = control$logLikFun,
     DNAbinData = DNAbinData,
     evoParsList = evoParsList,
@@ -263,6 +266,7 @@ phylo <- function(edge, edge.length, tip.label, node.label = NULL) {
 
 .optimTreeMCMC <- function(
   startingValues,
+  chainId,
   logLikFun,
   DNAbinData,
   evoParsList,
@@ -273,9 +277,10 @@ phylo <- function(edge, edge.length, tip.label, node.label = NULL) {
   MCMCcontrol <- do.call(MCMC.control, control$MCMC.control)
   phyDatData <- phangorn::as.phyDat(DNAbinData)
   # The following assumes that the order of tip labels matches the order of sequences in DNAbinData.
-  MCMCcontainer <- vector(mode = "list", length = floor((MCMCcontrol$n + MCMCcontrol$burnin)/MCMCcontrol$stepSize))
+  startIterNum <- 1
+  MCMCcontainer <- vector(mode = "list", length = floor((MCMCcontrol$n + MCMCcontrol$burnin)/MCMCcontrol$nIterPerSweep))
   filesToRestore <- NULL
-  if (!is.null(MCMCcontrol$folderToSaveIntermediateResults)) {
+  if (!is.null(MCMCcontrol$folderToSaveIntermediateResults) & !is.null(MCMCcontrol$chainId)) {
     filesToRestore <- list.files(path = MCMCcontrol$folderToSaveIntermediateResults, pattern = paste(MCMCcontrol$chainId, "_atIter", sep = ""), full.names = TRUE)
   }
   if (length(filesToRestore) > 0) {
@@ -293,7 +298,6 @@ phylo <- function(edge, edge.length, tip.label, node.label = NULL) {
     startLogLikValue <- logLikFun(phyloObj, phyDatData, evoParsList)
 
     currentState <- lapply(1:MCMCcontrol$nChains, function(x) list(paraValues = startingValues, logLik = startLogLikValue)) # All chains start in the same state.
-    startIterNum <- 1
     cat("Launching MCMC... \n")
   }
   bLogPrior <- lLogPrior <- function(x) 0
@@ -313,63 +317,63 @@ phylo <- function(edge, edge.length, tip.label, node.label = NULL) {
   }
   # Functions are defined here with an external dependence on currentState, but this is voluntary.
   logPriorAndTransFunList <- list(
-    topology = list(
+   topology = list(
       # logPriorFun = function(x) {
       #   .topologyLogPriorFun(dualPhyloAndTransTree = x, Lambda = currentState$paraValues$Lambda, numMigrationsPoissonPriorMean = control$numMigrationsPoissonPriorMean, estRootTime = estRootTime)
       #   },
-      logPriorFun = lapply(1:MCMCcontrol$nChains, FUN = function(chainNum) {
-        function(x, Lambda = currentState[[chainNum]]$paraValues$Lambda) {
+      logPriorFun = function(x, Lambda = currentState[[1]]$paraValues$Lambda) {
           .topologyLogPriorFun(dualPhyloAndTransTree = x, Lambda = Lambda, numMigrationsPoissonPriorMean = control$numMigrationsPoissonPriorMean, estRootTime = estRootTime)
-        }
-      }),
+        },
       transFun = .topologyTransFun),
     b = list(
-      logPriorFun = lapply(1:MCMCcontrol$nChains, FUN = function(x) bLogPrior),
+      logPriorFun =  bLogPrior,
       transFun = function(x) .phyloBranchLengthsTransFun(x, deflateCoef = MCMCcontrol$phyloBranchLengthsDeflateCoef, propToModify = MCMCcontrol$propPhyloBranchesToModify)),
     l = list(
-      logPriorFun = lapply(1:MCMCcontrol$nChains, FUN = function(x) lLogPrior),
+      logPriorFun = lLogPrior,
       transFun = function(x) .transTreeBranchLengthsTransFun(dualPhyloAndTransTree = x, tuningPara = MCMCcontrol$transTreeTuningPara, propToModify = MCMCcontrol$propTransTreeBranchesToModify)),
     Lambda = list(
-      logPriorFun = lapply(1:MCMCcontrol$nChains, FUN = function(x) .coalescenceRatesLogPriorFun),
+      logPriorFun = .coalescenceRatesLogPriorFun,
       transFun = function(x) .coalescenceRatesTransFun(x, sd = MCMCcontrol$coalRateKernelSD)))
   if (!control$fixedClockRate) {
       logPriorAndTransFunList$xi <- list(
-        logPriorFun = lapply(1:MCMCcontrol$nChains, FUN = function(y) {
-          function(x) {
-            .clockRatesLogPrior(x = x, meanValue = perSiteClockRate, variance = perSiteClockRate)
-          }
-        }),
+        logPriorFun = function(x) .clockRatesLogPrior(x = x, meanValue = perSiteClockRate, variance = perSiteClockRate),
         transFun = function(x) {
           .clockRatesTransFun(x = x, meanValue = perSiteClockRate, variance = perSiteClockRate, propToModify = MCMCcontrol$propClockRatesToModify)
         })
   }
   if (length(filesToRestore) == 0) { # New chains...
-    logPriorValue <- sapply(names(logPriorAndTransFunList), FUN = function(paraName) logPriorAndTransFunList[[paraName]]$logPriorFun[[1]](.getCurrentState(currentStateVector = currentState, paraName = paraName)))
+    logPriorValue <- sapply(names(logPriorAndTransFunList), FUN = function(paraName) logPriorAndTransFunList[[paraName]]$logPriorFun(.getCurrentState(currentStateVector = currentState[[1]], paraName = paraName)))
     names(logPriorValue) <- names(logPriorAndTransFunList)
     currentState <- lapply(1:MCMCcontrol$nChains, function(chainNum) {
-      currentState[[chainNum]]$logPrior <- logPriorValue
-      currentState[[chainNum]]$logPP <- startLogLikValue + sum(currentState[[chainNum]]$logPrior)
-      currentState[[chainNum]]
+      currentStateMember <- currentState[[chainNum]]
+      currentStateMember$logPrior <- logPriorValue
+      currentStateMember$logPP <- startLogLikValue + sum(currentStateMember$logPrior)
+      currentStateMember
     })
   }
-  cat("Chain is called ", MCMCcontrol$chainId, ". Specify this string in MCMC.control if you want to resume simulations.\n", sep = "")
+  cat("Chain is called ", chainId, ". Specify this string in MCMC.control if you want to resume simulations.\n", sep = "")
   cat("Starting values for log-priors: \n")
   print(currentState[[1]]$logPrior) # "1" is the cold chain
   cat("Starting value for log-lik.: \n")
   print(currentState[[1]]$logLik) # "1" is the cold chain
 
   clusterAddress <- parallel::makeForkCluster(nnodes = MCMCcontrol$nChains)
-  numSweeps <- ceiling((MCMCcontrol$n - startIterNum)/MCMCcontrol$nIterPerSweep)
-  lapply(1:numSweeps, FUN = function(sweepNum) {
-    currentState <- parallel::parLapply(1:MCMCcontrol$Nchain, cl = clusterAddress, FUN = function(chainNumber) {
+  numSweeps <- ceiling((MCMCcontrol$n + MCMCcontrol$burnin - startIterNum + 1)/MCMCcontrol$nIterPerSweep)
+  sweepFun <- function(sweepNum) {
+    chainFun <- function(chainNumber) {
       chainState <- currentState[[chainNumber]]
+      logPriorAndTransFunList$topology <- list(
+        logPriorFun = function(x, Lambda = chainState$paraValues$Lambda) {
+          .topologyLogPriorFun(dualPhyloAndTransTree = x, Lambda = Lambda, numMigrationsPoissonPriorMean = control$numMigrationsPoissonPriorMean, estRootTime = estRootTime)
+        },
+        transFun = .topologyTransFun)
       # for (MCMCiter in 1:(MCMCcontrol$n + MCMCcontrol$burnin)) {
-      for (MCMCiter in 1:MCMCcontrol$numIterPerSweep) {
+      for (MCMCiter in 1:MCMCcontrol$nIterPerSweep) {
         # if ((MCMCiter %% MCMCcontrol$print.frequency) == 0) cat("This is MCMC iteration ", MCMCiter, sep = "", ".\n")
         for (paraName in names(logPriorAndTransFunList)) {
           proposalValueAndTransKernRatio <- logPriorAndTransFunList[[paraName]]$transFun(.getCurrentState(chainState, paraName))
           updatedLogPrior <- chainState$logPrior
-          updatedLogPrior[[paraName]] <- logPriorAndTransFunList[[paraName]]$logPriorFun[[chainNumber]](proposalValueAndTransKernRatio$value)
+          updatedLogPrior[[paraName]] <- logPriorAndTransFunList[[paraName]]$logPriorFun(proposalValueAndTransKernRatio$value)
           updatedDualTree <- .getCurrentState(chainState, "topology")
           updatedLogLik <- chainState$logLik
 
@@ -378,10 +382,10 @@ phylo <- function(edge, edge.length, tip.label, node.label = NULL) {
             updatedLogLik <- logLikFun(.convertToPhylo(updatedDualTree), phyDatData, evoParsList)
           } else if (paraName == "l") { # The prior for 'b' is conditioned on 'l'.
             updatedDualTree <- proposalValueAndTransKernRatio$value
-            updatedLogPrior[["topology"]] <- logPriorAndTransFunList[["topology"]]$logPriorFun[[chainNumber]](updatedDualTree)
+            updatedLogPrior[["topology"]] <- logPriorAndTransFunList[["topology"]]$logPriorFun(updatedDualTree)
             updatedLogPrior[["b"]] <- logPriorAndTransFunList[["b"]]$logPriorFun(updatedDualTree)
           } else if (paraName == "Lambda") {
-            updatedLogPrior[["topology"]] <- logPriorAndTransFunList[["topology"]]$logPriorFun[[chainNumber]](updatedDualTree, Lambda = proposalValueAndTransKernRatio$value)
+            updatedLogPrior[["topology"]] <- logPriorAndTransFunList[["topology"]]$logPriorFun(updatedDualTree, Lambda = proposalValueAndTransKernRatio$value)
           }
           proposalLogPP <- updatedLogLik + sum(updatedLogPrior)
           MHratio <- proposalValueAndTransKernRatio$transKernRatio * exp(1/MCMCcontrol$temperatureParFun(chainNumber) * (proposalLogPP - chainState$logPP))
@@ -398,24 +402,30 @@ phylo <- function(edge, edge.length, tip.label, node.label = NULL) {
         }
       }
       chainState
-    })
+    }
+    currentState <- parallel::parLapply(X = 1:MCMCcontrol$nChains, cl = clusterAddress, fun = chainFun)
+    # currentState <- lapply(X = 1:MCMCcontrol$nChains, FUN = chainFun)
     # Processing exchanges between chains...
-    for (k in 1:(MCMCcontrol$numChains - 1)) {
-      logDenom <- 1/MCMCcontrol$temperatureParFun(k) * currentState[[k]]$logPP + 1/(k + 1) * currentState[[k+1]]$logPP
-      logNumer <- 1/MCMCcontrol$temperatureParFun(k+1) * currentState[[k]]$logPP + 1/MCMCcontrol$temperatureParFun(k) * currentState[[k+1]]$logPP
-      swapRatio <- exp(logNumer - logDenom)
+    # Based on https://www.cs.ubc.ca/~nando/540b-2011/projects/8.pdf
+    for (k in 1:(MCMCcontrol$nChains - 1)) {
+      logExpr <- (1/MCMCcontrol$temperatureParFun(k) - 1/MCMCcontrol$temperatureParFun(k+1)) * (currentState[[k+1]]$logPP - currentState[[k]]$logPP)
+      swapRatio <- exp(logExpr)
+      cat("Swap ratio:", swapRatio, "\n")
       if (runif(1) < swapRatio) {
+        cat("Swapping chains", k, "and", k + 1, "\n")
         currentState[c(k, k+1)] <- currentState[c(k+1, k)]
       }
     }
-
+    cat("Processed MCMC iteration ", sweepNum * MCMCcontrol$nIterPerSweep, ".\n", sep = "")
     # if ((MCMCiter %% MCMCcontrol$stepSize) == 0) {
-    MCMCcontainer[[sweepNum]] <- currentState
+    MCMCcontainer[[sweepNum]] <<- currentState
     if (!is.null(MCMCcontrol$folderToSaveIntermediateResults)) {
-      save(currentState, file = paste(MCMCcontrol$folderToSaveIntermediateResults, "/chainID_", MCMCcontrol$chainId, "_atIter", MCMCiter, ".Rdata", sep = ""), compress = TRUE)
-      }
+      MCMCiter <- sweepNum * MCMCcontrol$nIterPerSweep
+      save(currentState, file = paste(MCMCcontrol$folderToSaveIntermediateResults, "/chainID_", chainId, "_atIter", MCMCiter, ".Rdata", sep = ""), compress = TRUE)
+    }
     # }
-  })
+  }
+  lapply(1:numSweeps, FUN = sweepFun)
   cat("MCMC complete. Finalising... \n")
   lastIterToDrop <- floor(MCMCcontrol$burnin/MCMCcontrol$nIterPerSweep)
   elementsToDrop <- 0
