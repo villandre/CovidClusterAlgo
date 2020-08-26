@@ -82,7 +82,7 @@ findBayesianClusters <- function(
     startingValues$Lambda <- .genStartCoalescenceRates(startingValues$phyloAndTransTree, estRootTime = estRootTime, control = control)
     if (!control$fixedClockRate) {
       numRepeats <- ifelse(control$strictClockModel, 1, length(startingValues$phyloAndTransTree$edge.length))
-      startingValues$xi <- rep(perSiteClockRate, numRepeats)
+      startingValues$xi <- .genStartXi(startingValues$phyloAndTransTree, numSites = ncol(DNAbinData))
     }
     if (!is.null(control$MCMC.control$folderToSaveIntermediateResults)) {
       startingValuesFilename <- paste(control$MCMC.control$folderToSaveIntermediateResults, "/chain_", chainId, "_startingValues.Rdata", sep = "")
@@ -124,6 +124,13 @@ findBayesianClusters <- function(
     clusterValues <- getRegionClusters(dualPhyloAndTransTree = sampledTreesWithPP[[which.max(logPPvalues)]]$paraValues$phyloAndTransTree, clusterRegionCode = clusterRegion)
   }
   list(chain = sampledTreesWithPP, MAPclusters = clusterValues)
+}
+
+.genStartXi <- function(phyloAndTransTree, numSites) {
+  phyloBranchLengths <- sapply(phyloAndTransTree$edge.length, "[[", "phylogeny")
+  phyloBranchLengths <- replace(phyloBranchLengths, which(phyloBranchLengths == 0), 1/(2 * numSites))
+  transTreeBranchLengths <- sapply(phyloAndTransTree$edge.length, "[[", "transmissionTree")
+  phyloBranchLengths/transTreeBranchLengths
 }
 
 .performBasicChecks <- function() {
@@ -300,22 +307,7 @@ phylo <- function(edge, edge.length, tip.label, node.label = NULL) {
     currentState <- lapply(1:MCMCcontrol$nChains, function(x) list(paraValues = startingValues, logLik = startLogLikValue)) # All chains start in the same state.
     cat("Launching MCMC... \n")
   }
-  bLogPrior <- lLogPrior <- function(x) 0
-  if (control$transTreeCondOnPhylo) {
-    bLogPrior <- function(x) .phyloBranchLengthsLogPriorFun(dualPhyloAndTransTree = x)
 
-    if (control$fixedClockRate) {
-      lLogPrior <- function(x) .transTreeBranchLengthsConditionalLogPrior(dualPhyloAndTransTree = x, perSiteClockRate = perSiteClockRate, numSites = ncol(DNAbinData))
-    } else {
-      stop("You set fixedClockRate = FALSE. Yet another unimplemented feature. Message package maintainer to complain. Stopping... \n")
-      lLogPrior <- function(x) .transTreeBranchLengthsConditionalLogPrior(dualPhyloAndTransTree = x, perSiteClockRate = currentState$paraValues$xi, numSites = ncol(DNAbinData))
-    }
-  } else {
-    stop("Feature not implemented yet. Please set transTreeCondOnPhylo (in control parameters) to TRUE. Message package maintainer to complain.\n")
-    bLogPrior <- function(x) .phyloBranchLengthsConditionalLogPriorFun(dualPhyloAndTransTree = x, perSiteClockRate = perSiteClockRate, numSites = ncol(DNAbinData))
-    lLogPrior <- function(x) .transTreeBranchLengthsLogPrior(dualPhyloAndTransTree = x, perSiteClockRate = perSiteClockRate)
-  }
-  # Functions are defined here with an external dependence on currentState, but this is voluntary.
   logPriorAndTransFunList <- list(
    topology = list(
       # logPriorFun = function(x) {
@@ -326,28 +318,28 @@ phylo <- function(edge, edge.length, tip.label, node.label = NULL) {
         },
       transFun = .topologyTransFun),
     b = list(
-      logPriorFun =  bLogPrior,
+      logPriorFun =  function(x) .phyloBranchLengthsLogPriorFun(dualPhyloAndTransTree = x),
       transFun = function(x) .phyloBranchLengthsTransFun(x, deflateCoef = MCMCcontrol$phyloBranchLengthsDeflateCoef, propToModify = MCMCcontrol$propPhyloBranchesToModify)),
     l = list(
-      logPriorFun = lLogPrior,
-      transFun = function(x) .transTreeBranchLengthsTransFun(dualPhyloAndTransTree = x, tuningPara = MCMCcontrol$transTreeTuningPara, propToModify = MCMCcontrol$propTransTreeBranchesToModify)),
+      logPriorFun = function(x) .transTreeBranchLengthsConditionalLogPrior(dualPhyloAndTransTree = x, perSiteClockRate = perSiteClockRate, numSites = ncol(DNAbinData), gammaShapePar = MCMCcontrol$transTreeBranchLengthsGammaShapePar),
+      transFun = function(x) .transTreeBranchLengthsTransFun(dualPhyloAndTransTree = x, tuningPara = MCMCcontrol$transTreeTuningPara, propToModify = MCMCcontrol$propTransTreeBranchesToModify, rootTransitionPar = MCMCcontrol$rootTransitionPar)),
     Lambda = list(
       logPriorFun = .coalescenceRatesLogPriorFun,
       transFun = function(x) .coalescenceRatesTransFun(x, sd = MCMCcontrol$coalRateKernelSD)))
-  if (!control$fixedClockRate) {
-      logPriorAndTransFunList$xi <- list(
-        logPriorFun = function(x) .clockRatesLogPrior(x = x, meanValue = perSiteClockRate, variance = perSiteClockRate),
-        transFun = function(x) {
-          .clockRatesTransFun(x = x, meanValue = perSiteClockRate, variance = perSiteClockRate, propToModify = MCMCcontrol$propClockRatesToModify)
-        })
-  }
+
+  logPriorAndTransFunList$xi <- list(
+    logPriorFun = function(x) .clockRatesLogPrior(x = x, meanValue = perSiteClockRate, stdDev = perSiteClockRate), # Will be modified later on if fixedClockRate is FALSE
+    transFun = function(x) {
+      .clockRatesTransFun(x = x, propToModify = MCMCcontrol$propClockRatesToModify)
+    })
+
   if (length(filesToRestore) == 0) { # New chains...
     logPriorValue <- sapply(names(logPriorAndTransFunList), FUN = function(paraName) logPriorAndTransFunList[[paraName]]$logPriorFun(.getCurrentState(currentStateVector = currentState[[1]], paraName = paraName)))
     names(logPriorValue) <- names(logPriorAndTransFunList)
     currentState <- lapply(1:MCMCcontrol$nChains, function(chainNum) {
       currentStateMember <- currentState[[chainNum]]
       currentStateMember$logPrior <- logPriorValue
-      currentStateMember$logPP <- startLogLikValue + sum(currentStateMember$logPrior)
+      currentStateMember$logPP <- (startLogLikValue + sum(currentStateMember$logPrior)) * (1/MCMCcontrol$temperatureParFun(chainNum))
       currentStateMember
     })
   }
@@ -362,6 +354,9 @@ phylo <- function(edge, edge.length, tip.label, node.label = NULL) {
   sweepFun <- function(sweepNum) {
     chainFun <- function(chainNumber) {
       chainState <- currentState[[chainNumber]]
+      if (!control$fixedClockRate) {
+        logPriorAndTransFunList$l$logPriorFun = function(x) .transTreeBranchLengthsConditionalLogPrior(dualPhyloAndTransTree = x, perSiteClockRate = chainState$paraValues$xi, numSites = ncol(DNAbinData), gammaShapePar = MCMCcontrol$transTreeBranchLengthsGammaShapePar)
+      }
       logPriorAndTransFunList$topology <- list(
         logPriorFun = function(x, Lambda = chainState$paraValues$Lambda) {
           .topologyLogPriorFun(dualPhyloAndTransTree = x, Lambda = Lambda, numMigrationsPoissonPriorMean = control$numMigrationsPoissonPriorMean, estRootTime = estRootTime)
@@ -387,8 +382,11 @@ phylo <- function(edge, edge.length, tip.label, node.label = NULL) {
           } else if (paraName == "Lambda") {
             updatedLogPrior[["topology"]] <- logPriorAndTransFunList[["topology"]]$logPriorFun(updatedDualTree, Lambda = proposalValueAndTransKernRatio$value)
           }
-          proposalLogPP <- updatedLogLik + sum(updatedLogPrior)
-          MHratio <- proposalValueAndTransKernRatio$transKernRatio * exp(1/MCMCcontrol$temperatureParFun(chainNumber) * (proposalLogPP - chainState$logPP))
+          proposalLogPP <- (updatedLogLik + sum(updatedLogPrior)) * 1/MCMCcontrol$temperatureParFun(chainNumber)
+          exponentValue <- proposalLogPP - chainState$logPP
+          MHratio <- proposalValueAndTransKernRatio$transKernRatio * exp(exponentValue)
+          # cat("Para.:", paraName, "\n", sep = " ")
+          # cat("transKernRatio:", proposalValueAndTransKernRatio$transKernRatio, "exponent:", exponentValue, "proposal LogPP:", proposalLogPP, "current LogPP:", chainState$logPP, "\n", sep = " ")
           if (runif(1) <= MHratio) {
             if (paraName %in% c("topology", "l", "b")) {
               chainState$paraValues$phyloAndTransTree <- updatedDualTree
@@ -400,6 +398,7 @@ phylo <- function(edge, edge.length, tip.label, node.label = NULL) {
             chainState$logPP <- proposalLogPP
           }
         }
+        # cat("End iter. Current log-PP:", chainState$logPP, "\n", sep = " ")
       }
       chainState
     }
@@ -408,12 +407,14 @@ phylo <- function(edge, edge.length, tip.label, node.label = NULL) {
     # Processing exchanges between chains...
     # Based on https://www.cs.ubc.ca/~nando/540b-2011/projects/8.pdf
     for (k in 1:(MCMCcontrol$nChains - 1)) {
-      logExpr <- (1/MCMCcontrol$temperatureParFun(k) - 1/MCMCcontrol$temperatureParFun(k+1)) * (currentState[[k+1]]$logPP - currentState[[k]]$logPP)
+      logExpr <- MCMCcontrol$temperatureParFun(k+1)/MCMCcontrol$temperatureParFun(k) * currentState[[k+1]]$logPP + MCMCcontrol$temperatureParFun(k)/MCMCcontrol$temperatureParFun(k+1) * currentState[[k]]$logPP - (currentState[[k]]$logPP + currentState[[k+1]]$logPP)
       swapRatio <- exp(logExpr)
       cat("Swap ratio:", swapRatio, "\n")
       if (runif(1) < swapRatio) {
         cat("Swapping chains", k, "and", k + 1, "\n")
         currentState[c(k, k+1)] <- currentState[c(k+1, k)]
+        currentState[[k]]$logPP <- currentState[[k]]$logPP * MCMCcontrol$temperatureParFun(k+1)/MCMCcontrol$temperatureParFun(k)
+        currentState[[k+1]]$logPP <- currentState[[k+1]]$logPP * MCMCcontrol$temperatureParFun(k)/MCMCcontrol$temperatureParFun(k + 1)
       }
     }
     cat("Processed MCMC iteration ", sweepNum * MCMCcontrol$nIterPerSweep, ".\n", sep = "")
@@ -454,6 +455,7 @@ phylo <- function(edge, edge.length, tip.label, node.label = NULL) {
 #' @param propPhyloBranchesToModify number between 0 and 1, proportion of branches that are modified by the transition kernel every iteration
 #' @param transTreeTuningPara tuning parameter for the transmission tree transition kernel, determines the boundaries of the uniform density used to propose new branch lengths in the transmission tree; a higher value leads to larger steps, and a lower acceptance rate
 #' @param propTransTreeBranchesToModify like propPhyloBranchesToModify, but for the transmission tree
+#' @param transTreeBranchLengthsGammaShapePar priors for branch lengths in the transmission tree are gamma-distributed with this shape parameter; at the default value (1), the distribution is exponential
 #'
 #' @details You should not need to call this function directly: it is merely a convenient and formal way to let users know how the MCMC run can be customised.
 #' @return A list of control parameters
@@ -461,14 +463,14 @@ phylo <- function(edge, edge.length, tip.label, node.label = NULL) {
 #'  MCMC.control(n = 1e6, stepSize = 100, burnin = 1e5)
 #' }
 #' @export
-MCMC.control <- function(n = 2e5, nIterPerSweep = 100, nChains = 1, temperatureParFun = function(x) x, stepSize = 50, burnin = 1e4, folderToSaveIntermediateResults = NULL, chainId = NULL, coalRateKernelSD = 0.5, print.frequency = 10, phyloBranchLengthsDeflateCoef = 0.98, propPhyloBranchesToModify = 0.1, transTreeTuningPara = 0.1, propTransTreeBranchesToModify = 0.1, propClockRatesToModify = 0.1) {
+MCMC.control <- function(n = 2e5, nIterPerSweep = 100, nChains = 1, temperatureParFun = function(x) x, stepSize = 50, burnin = 1e4, folderToSaveIntermediateResults = NULL, chainId = NULL, coalRateKernelSD = 0.5, print.frequency = 10, phyloBranchLengthsDeflateCoef = 0.98, propPhyloBranchesToModify = 0.1, transTreeTuningPara = 0.1, propTransTreeBranchesToModify = 0.1, propClockRatesToModify = 0.1, rootTransitionPar = 15, transTreeBranchLengthsGammaShapePar = 1) {
   if (temperatureParFun(1) != 1) {
     stop("temperatureParFun(1) must return '1' as it is for the cold chain! Please fix this (or leave the default value) and re-run the code. \n")
   }
   if (nChains == 1) {
     nIterPerSweep <- stepSize
   }
-  list(n = n, nIterPerSweep = nIterPerSweep, nChains = nChains, temperatureParFun = temperatureParFun, stepSize = stepSize, burnin = burnin, folderToSaveIntermediateResults = folderToSaveIntermediateResults, chainId = chainId, coalRateKernelSD = coalRateKernelSD, print.frequency = print.frequency, phyloBranchLengthsDeflateCoef = phyloBranchLengthsDeflateCoef, propPhyloBranchesToModify = propPhyloBranchesToModify, transTreeTuningPara = transTreeTuningPara, propTransTreeBranchesToModify = propTransTreeBranchesToModify, propClockRatesToModify = propClockRatesToModify)
+  list(n = n, nIterPerSweep = nIterPerSweep, nChains = nChains, temperatureParFun = temperatureParFun, stepSize = stepSize, burnin = burnin, folderToSaveIntermediateResults = folderToSaveIntermediateResults, chainId = chainId, coalRateKernelSD = coalRateKernelSD, print.frequency = print.frequency, phyloBranchLengthsDeflateCoef = phyloBranchLengthsDeflateCoef, propPhyloBranchesToModify = propPhyloBranchesToModify, transTreeTuningPara = transTreeTuningPara, propTransTreeBranchesToModify = propTransTreeBranchesToModify, propClockRatesToModify = propClockRatesToModify, rootTransitionPar = rootTransitionPar, transTreeBranchLengthsGammaShapePar = transTreeBranchLengthsGammaShapePar)
 }
 
 .getCurrentState <- function(currentStateVector, paraName = c("topology", "b", "l", "Lambda")) {
@@ -797,7 +799,7 @@ MCMC.control <- function(n = 2e5, nIterPerSweep = 100, nChains = 1, temperatureP
   sum(sapply(seq_along(dualPhyloAndTransTree$edge.length), FUN = transTreeSingleBranchLengthLogPrior))
 }
 
-.transTreeBranchLengthsConditionalLogPrior <- function(dualPhyloAndTransTree, perSiteClockRate, numSites) {
+.transTreeBranchLengthsConditionalLogPrior <- function(dualPhyloAndTransTree, perSiteClockRate, numSites, gammaShapePar = 1) {
   transTreeSingleBranchLengthConditionalLogPrior <- function(branchIndex) {
     if (length(perSiteClockRate) == 1) {
       perSiteClockRate <- rep(perSiteClockRate, nrow(dualPhyloAndTransTree$edge))
@@ -806,35 +808,38 @@ MCMC.control <- function(n = 2e5, nIterPerSweep = 100, nChains = 1, temperatureP
     transTreeBranchLength <- dualPhyloAndTransTree$edge.length[[branchIndex]]$transmissionTree
 
     if (identical(phyloBranchLength, 0)) {
-      logProb <- dexp(transTreeBranchLength, rate = 2 * perSiteClockRate[[branchIndex]] * numSites, log = TRUE)
+      # logProb <- dexp(transTreeBranchLength, rate = 2 * perSiteClockRate[[branchIndex]] * numSites, log = TRUE)
+      logProb <- dgamma(transTreeBranchLength, shape = gammaShapePar, scale = 1/(2 * perSiteClockRate[[branchIndex]] * numSites * gammaShapePar), log = TRUE)
     } else {
-      logProb <- dexp(transTreeBranchLength, rate = perSiteClockRate[[branchIndex]]/phyloBranchLength, log = TRUE)
+      # logProb <- dexp(transTreeBranchLength, rate = perSiteClockRate[[branchIndex]]/phyloBranchLength, log = TRUE)
+      logProb <- dgamma(transTreeBranchLength, shape = gammaShapePar, scale = phyloBranchLength/(perSiteClockRate[[branchIndex]] * gammaShapePar), log = TRUE)
     }
     logProb
   }
   sum(sapply(seq_along(dualPhyloAndTransTree$edge.length), FUN = transTreeSingleBranchLengthConditionalLogPrior))
 }
 
-.transTreeBranchLengthsTransFun <- function(dualPhyloAndTransTree, tuningPara = 0.1, propToModify = 0.1) {
+.transTreeBranchLengthsTransFun <- function(dualPhyloAndTransTree, tuningPara = 0.1, propToModify = 0.1, rootTransitionPar = 15) {
   numTips <- length(dualPhyloAndTransTree$tip.label)
   numNodes <- length(dualPhyloAndTransTree$node.label)
   updateNodeTime <- function(nodeIndex) {
     currentTime <- dualPhyloAndTransTree$node.label[[nodeIndex - numTips]]$time
-    if (nodeIndex != (numTips + 1)) {
-      # parentIndex <- phangorn::Ancestors(dualPhyloAndTransTree, nodeIndex, "parent")
-      parentIndex <- dualPhyloAndTransTree$edge[match(nodeIndex, dualPhyloAndTransTree$edge[ , 2]), 1]
-      parentTime <- dualPhyloAndTransTree$node.label[[parentIndex - numTips]]$time
-    } else {
-      parentTime <- currentTime
-    }
     childrenIndices <- phangorn::Children(dualPhyloAndTransTree, nodeIndex)
     childrenTimes <- sapply(childrenIndices, function(childIndex) .getVertexLabel(dualPhyloAndTransTree, childIndex)$time)
-    lowerBound <- currentTime - (currentTime - parentTime) * tuningPara
-    upperBound <- currentTime + (min(childrenTimes) - currentTime) * tuningPara
+    branchIndex <- match(nodeIndex, dualPhyloAndTransTree$edge[ , 2])
+    if (!is.na(branchIndex)) {
+      lowerBound <- currentTime - dualPhyloAndTransTree$edge.length[[branchIndex]]$transmissionTree * tuningPara
+    } else {
+      lowerBound <- currentTime - runif(1, 0, rootTransitionPar) # Time is in days.
+    }
+      upperBound <- currentTime + abs(min(childrenTimes) - currentTime) * tuningPara
     updatedTime <- runif(1, lowerBound, upperBound)
     updatedTime
   }
-  numNodesToModify <- ceiling(propToModify * numNodes)
+  numNodesToModify <- 1
+  if (propToModify > 0) {
+    numNodesToModify <- ceiling(propToModify * numNodes)
+  }
   nodesToUpdate <- sample(seq_along(dualPhyloAndTransTree$node.label) + numTips, size = numNodesToModify, replace = FALSE)
   updatedNodeTimes <- sapply(nodesToUpdate, updateNodeTime)
 
@@ -1076,13 +1081,13 @@ prune.tree <- function(phylogeny, node) {
 }
 
 # We pick a log-normal prior on the original scale because we would like the prior on the log-scale to be normal.
-.clockRatesLogPrior <- function(x, meanValue, variance) {
-  mu <- log(meanValue^2/sqrt(variance + meanValue^2))
-  sigmaSq <- log(variance/meanValue^2 + 1)
-  dlnorm(x = x, meanlog = mu, sdlog = sqrt(sigmaSq), log = TRUE)
+.clockRatesLogPrior <- function(x, meanValue, stdDev) {
+  mu <- log(meanValue^2/sqrt(stdDev^2 + meanValue^2))
+  sigmaSq <- log(stdDev^2/meanValue^2 + 1)
+  sum(dlnorm(x = x, meanlog = mu, sdlog = sqrt(sigmaSq), log = TRUE))
 }
 
-.clockRatesTransFun <- function(x, meanValue, variance, propToModify = 0.01) {
+.clockRatesTransFun <- function(x, propToModify = 0.01) {
   numToModify <- ceiling(propToModify * length(x))
   posToModify <- sample.int(n = length(x), size = numToModify, replace = FALSE)
   newValues <- exp(rnorm(n = numToModify, mean = log(x), sd = log(2))) # HARD-CODED: FIX THIS.
