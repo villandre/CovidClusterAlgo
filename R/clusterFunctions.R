@@ -354,6 +354,7 @@ phylo <- function(edge, edge.length, tip.label, node.label = NULL) {
   clusterAddress <- parallel::makeForkCluster(nnodes = MCMCcontrol$nChains)
   numSweeps <- ceiling((MCMCcontrol$n + MCMCcontrol$burnin - startIterNum + 1)/MCMCcontrol$nIterPerSweep)
   sweepFun <- function(sweepNum) {
+
     chainFun <- function(chainNumber) {
       chainState <- currentState[[chainNumber]]
       if (!control$fixedClockRate) {
@@ -400,11 +401,12 @@ phylo <- function(edge, edge.length, tip.label, node.label = NULL) {
             chainState$logPP <- proposalLogPP
           }
         }
+        # cat("End iter. Current log-PP:", chainState$logPP, "\n", sep = " ")
       }
       chainState
     }
 
-    currentState <- parallel::parLapply(X = 1:MCMCcontrol$nChains, cl = clusterAddress, fun = chainFun)
+    currentState <<- parallel::parLapply(X = 1:MCMCcontrol$nChains, cl = clusterAddress, fun = chainFun)
     # currentState <<- lapply(X = 1:MCMCcontrol$nChains, FUN = chainFun)
     # Processing exchanges between chains...
     # Based on https://www.cs.ubc.ca/~nando/540b-2011/projects/8.pdf
