@@ -400,16 +400,12 @@ phylo <- function(edge, edge.length, tip.label, node.label = NULL) {
             chainState$logPP <- proposalLogPP
           }
         }
-        logPPcontainer[[chainNumber]][[MCMCiter]] <<- chainState$logPP
-        # cat("End iter. Current log-PP:", chainState$logPP, "\n", sep = " ")
       }
       chainState
     }
 
-    # currentState <- parallel::parLapply(X = 1:MCMCcontrol$nChains, cl = clusterAddress, fun = chainFun)
-    currentState <<- lapply(X = 1:MCMCcontrol$nChains, FUN = chainFun)
-    cat("Container for log-PP values in each chain: \n")
-    print(logPPcontainer)
+    currentState <- parallel::parLapply(X = 1:MCMCcontrol$nChains, cl = clusterAddress, fun = chainFun)
+    # currentState <<- lapply(X = 1:MCMCcontrol$nChains, FUN = chainFun)
     # Processing exchanges between chains...
     # Based on https://www.cs.ubc.ca/~nando/540b-2011/projects/8.pdf
     for (k in 1:(MCMCcontrol$nChains - 1)) {
