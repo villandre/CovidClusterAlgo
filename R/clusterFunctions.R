@@ -711,20 +711,18 @@ MCMC.control <- function(n = 2e5, nIterPerSweep = 100, nChains = 1, temperatureP
 }
 
 .phyloBranchLengthsTransFun <- function(phyloAndTransTree, inflateCoef = log(1.05), propToModify = 0.1) {
-  logBranchLengths <- log(sapply(phyloAndTransTree$edge.length, FUN = '[[', "phylogeny"))
-  nonZeroLengthBranchPos <- which(!is.infinite(logBranchLengths))
+  branchLengths <- sapply(phyloAndTransTree$edge.length, FUN = '[[', "phylogeny")
+  nonZeroLengthBranchPos <- which(branchLengths > 0)
   numToModify <- ceiling(propToModify * length(nonZeroLengthBranchPos))
   branchesToModify <- sample(nonZeroLengthBranchPos, size = numToModify, replace = FALSE)
   modCoef <- c(inflateCoef, -inflateCoef)
-  newPos <- logBranchLengths
-  #newPos[nonZeroLengthBranchPos] <- rnorm(n = length(nonZeroLengthBranchPos), mean = logBranchLengths[nonZeroLengthBranchPos], sd = transKernSD)
-  newPos[branchesToModify] <- newPos[branchesToModify] + sample(x = modCoef, size = length(branchesToModify), replace = TRUE)
-  # logTransKernRatio <- sum(dnorm(x = logBranchLengths[nonZeroLengthBranchPos], mean = newPos[nonZeroLengthBranchPos], sd = transKernSD, log = TRUE) - dnorm(x = newPos[nonZeroLengthBranchPos], mean = logBranchLengths[nonZeroLengthBranchPos], sd = transKernSD, log = TRUE))
-  phyloAndTransTree$edge.length <- lapply(seq_along(phyloAndTransTree$edge.length), function(edgeIndex) {
+
+  newEdgeLengths <- lapply(branchesToModify, function(edgeIndex) {
     edgeElement <- phyloAndTransTree$edge.length[[edgeIndex]]
-    edgeElement$phylogeny <- exp(newPos[[edgeIndex]])
+    edgeElement$phylogeny <- exp(edgeElement$phylogeny + sample(x = modCoef, size = 1))
     edgeElement
   })
+  phyloAndTransTree$edge.length[branchesToModify] <- newEdgeLengths
 
   list(value = phyloAndTransTree, transKernRatio = 1)
 }
