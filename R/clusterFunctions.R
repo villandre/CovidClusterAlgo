@@ -326,7 +326,7 @@ phylo <- function(edge, edge.length, tip.label, node.label = NULL) {
       transFun = .topologyTransFun),
     b = list(
       logPriorFun =  function(x) .phyloBranchLengthsLogPriorFun(phyloAndTransTree = x),
-      transFun = function(x) .phyloBranchLengthsTransFun(x, inflateCoef = MCMCcontrol$phyloBranchLengthsInflateCoef, propToModify = MCMCcontrol$propPhyloBranchesToModify)),
+      transFun = function(x) .phyloBranchLengthsTransFun(x, logTransKernSD = MCMCcontrol$phyloBranchLengthsLogTransKernSD, propToModify = MCMCcontrol$propPhyloBranchesToModify)),
     l = list(
       logPriorFun = function(x) .transTreeBranchLengthsConditionalLogPrior(phyloAndTransTree = x, numSites = ncol(DNAbinData), gammaShapePar = MCMCcontrol$transTreeBranchLengthsGammaShapePar),
       transFun = function(x) .transTreeBranchLengthsTransFun(phyloAndTransTree = x, tuningPara = MCMCcontrol$transTreeTuningPara, propToModify = MCMCcontrol$propTransTreeBranchesToModify, rootTransitionPar = MCMCcontrol$rootTransitionPar)),
@@ -397,8 +397,8 @@ phylo <- function(edge, edge.length, tip.label, node.label = NULL) {
           proposalLogPP <- (updatedLogLik + sum(updatedLogPrior)) * 1/MCMCcontrol$temperatureParFun(chainNumber)
           exponentValue <- proposalLogPP - chainState$logPP
           MHratio <- proposalValueAndTransKernRatio$transKernRatio * exp(exponentValue)
-          cat("Para.:", paraName, "\n", sep = " ")
-          cat("transKernRatio:", proposalValueAndTransKernRatio$transKernRatio, "exponent:", exponentValue, "proposal LogPP:", proposalLogPP, "current LogPP:", chainState$logPP, "\n", sep = " ")
+          # cat("Para.:", paraName, "\n", sep = " ")
+          # cat("transKernRatio:", proposalValueAndTransKernRatio$transKernRatio, "exponent:", exponentValue, "proposal LogPP:", proposalLogPP, "current LogPP:", chainState$logPP, "\n", sep = " ")
           if (runif(1) <= MHratio) {
             if (paraName %in% c("topology", "l", "b")) {
               chainState$paraValues$phyloAndTransTree <- updatedDualTree
@@ -415,8 +415,8 @@ phylo <- function(edge, edge.length, tip.label, node.label = NULL) {
       chainState
     }
 
-    # currentState <<- parallel::parLapply(X = 1:MCMCcontrol$nChains, cl = clusterAddress, fun = chainFun)
-    currentState <<- lapply(X = 1:MCMCcontrol$nChains, FUN = chainFun)
+    currentState <<- parallel::parLapply(X = 1:MCMCcontrol$nChains, cl = clusterAddress, fun = chainFun)
+    # currentState <<- lapply(X = 1:MCMCcontrol$nChains, FUN = chainFun)
     # Processing exchanges between chains...
     # Based on https://www.cs.ubc.ca/~nando/540b-2011/projects/8.pdf
     for (k in 1:(MCMCcontrol$nChains - 1)) {
@@ -465,7 +465,7 @@ phylo <- function(edge, edge.length, tip.label, node.label = NULL) {
 #' @param chainId glyph program previously assigned a chain, used to resume a chain, can be found in the printed output of findBayesianClusters after "Launching MCMC..."
 #' @param coalRateKernelSD tuning parameter for the Gaussian coalescence rates transition kernel
 #' @param print.frequency number indicating at which interval the program prints information on the chain
-#' @param phyloBranchLengthsInflateCoef number between 0 and 1, tuning parameter for the phylogenetic branch lengths transition kernel, a lower value translates to larger variations, and a lower acceptance rate in the chain
+#' @param phyloBranchLengthsLogTransKernSD number between 0 and 1, tuning parameter for the phylogenetic branch lengths transition kernel, a lower value translates to larger variations, and a lower acceptance rate in the chain
 #' @param propPhyloBranchesToModify number between 0 and 1, proportion of branches that are modified by the transition kernel every iteration
 #' @param transTreeTuningPara tuning parameter for the transmission tree transition kernel, determines the boundaries of the uniform density used to propose new branch lengths in the transmission tree; a higher value leads to larger steps, and a lower acceptance rate
 #' @param propTransTreeBranchesToModify like propPhyloBranchesToModify, but for the transmission tree
@@ -477,14 +477,14 @@ phylo <- function(edge, edge.length, tip.label, node.label = NULL) {
 #'  MCMC.control(n = 1e6, stepSize = 100, burnin = 1e5)
 #' }
 #' @export
-MCMC.control <- function(n = 2e5, nIterPerSweep = 100, nChains = 1, temperatureParFun = function(x) x, stepSize = 50, burnin = 1e4, folderToSaveIntermediateResults = NULL, chainId = NULL, coalRateKernelSD = 0.5, print.frequency = 10, phyloBranchLengthsInflateCoef = log(1.02), propPhyloBranchesToModify = 0.1, transTreeTuningPara = 0.1, propTransTreeBranchesToModify = 0.1, propClockRatesToModify = 0.1, rootTransitionPar = 15, transTreeBranchLengthsGammaShapePar = 1, clockRatesLogKernelSD = 1) {
+MCMC.control <- function(n = 2e5, nIterPerSweep = 100, nChains = 1, temperatureParFun = function(x) x, stepSize = 50, burnin = 1e4, folderToSaveIntermediateResults = NULL, chainId = NULL, coalRateKernelSD = 0.5, print.frequency = 10, phyloBranchLengthsLogTransKernSD = log(1.05), propPhyloBranchesToModify = 0.1, transTreeTuningPara = 0.1, propTransTreeBranchesToModify = 0.1, propClockRatesToModify = 0.1, rootTransitionPar = 15, transTreeBranchLengthsGammaShapePar = 1, clockRatesLogKernelSD = 1) {
   if (temperatureParFun(1) != 1) {
     stop("temperatureParFun(1) must return '1' as it is for the cold chain! Please fix this (or leave the default value) and re-run the code. \n")
   }
   if (nChains == 1) {
     nIterPerSweep <- stepSize
   }
-  list(n = n, nIterPerSweep = nIterPerSweep, nChains = nChains, temperatureParFun = temperatureParFun, stepSize = stepSize, burnin = burnin, folderToSaveIntermediateResults = folderToSaveIntermediateResults, chainId = chainId, coalRateKernelSD = coalRateKernelSD, print.frequency = print.frequency, phyloBranchLengthsInflateCoef = phyloBranchLengthsInflateCoef, propPhyloBranchesToModify = propPhyloBranchesToModify, transTreeTuningPara = transTreeTuningPara, propTransTreeBranchesToModify = propTransTreeBranchesToModify, propClockRatesToModify = propClockRatesToModify, rootTransitionPar = rootTransitionPar, transTreeBranchLengthsGammaShapePar = transTreeBranchLengthsGammaShapePar, clockRatesLogKernelSD = clockRatesLogKernelSD)
+  list(n = n, nIterPerSweep = nIterPerSweep, nChains = nChains, temperatureParFun = temperatureParFun, stepSize = stepSize, burnin = burnin, folderToSaveIntermediateResults = folderToSaveIntermediateResults, chainId = chainId, coalRateKernelSD = coalRateKernelSD, print.frequency = print.frequency, phyloBranchLengthsLogTransKernSD = phyloBranchLengthsLogTransKernSD, propPhyloBranchesToModify = propPhyloBranchesToModify, transTreeTuningPara = transTreeTuningPara, propTransTreeBranchesToModify = propTransTreeBranchesToModify, propClockRatesToModify = propClockRatesToModify, rootTransitionPar = rootTransitionPar, transTreeBranchLengthsGammaShapePar = transTreeBranchLengthsGammaShapePar, clockRatesLogKernelSD = clockRatesLogKernelSD)
 }
 
 .getCurrentState <- function(currentStateVector, paraName = c("topology", "b", "l", "Lambda", "xi")) {
@@ -709,16 +709,18 @@ MCMC.control <- function(n = 2e5, nIterPerSweep = 100, nChains = 1, temperatureP
   sum(sapply(phyloAndTransTree$edge.length, function(edgeLengthElement) return(0))) # We're assuming a uniform prior. The densities are non-standardised but it doesn't matter for MCMC
 }
 
-.phyloBranchLengthsTransFun <- function(phyloAndTransTree, inflateCoef = log(1.05), propToModify = 0.1) {
+.phyloBranchLengthsTransFun <- function(phyloAndTransTree, logTransKernSD = log(1.05), propToModify = 0.1) {
   branchLengths <- sapply(phyloAndTransTree$edge.length, FUN = '[[', "phylogeny")
   nonZeroLengthBranchPos <- which(branchLengths > 0)
-  numToModify <- ceiling(propToModify * length(nonZeroLengthBranchPos))
+  numToModify <- 1
+  if (propToModify > 0) {
+    numToModify <- ceiling(propToModify * length(nonZeroLengthBranchPos))
+  }
   branchesToModify <- sample(nonZeroLengthBranchPos, size = numToModify, replace = FALSE)
-  modCoef <- c(inflateCoef, -inflateCoef)
 
   newEdgeLengths <- lapply(branchesToModify, function(edgeIndex) {
     edgeElement <- phyloAndTransTree$edge.length[[edgeIndex]]
-    edgeElement$phylogeny <- exp(edgeElement$phylogeny + sample(x = modCoef, size = 1))
+    edgeElement$phylogeny <- exp(rnorm(n = 1, mean = log(edgeElement$phylogeny), sd = logTransKernSD))
     edgeElement
   })
   phyloAndTransTree$edge.length[branchesToModify] <- newEdgeLengths
