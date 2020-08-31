@@ -373,27 +373,26 @@ phylo <- function(edge, edge.length, tip.label, node.label = NULL) {
       for (MCMCiter in 1:MCMCcontrol$nIterPerSweep) {
         # if ((MCMCiter %% MCMCcontrol$print.frequency) == 0) cat("This is MCMC iteration ", MCMCiter, sep = "", ".\n")
         for (paraName in names(logPriorAndTransFunList)) {
-          if (paraName == "b") browser()
           proposalValueAndTransKernRatio <- logPriorAndTransFunList[[paraName]]$transFun(.getCurrentState(chainState, paraName))
           updatedLogPrior <- chainState$logPrior
           updatedLogPrior[[paraName]] <- logPriorAndTransFunList[[paraName]]$logPriorFun(proposalValueAndTransKernRatio$value)
           updatedDualTree <- .getCurrentState(chainState, "topology")
-          updatedLogLik <- chainState$logLik
-
-          if (paraName %in% c("topology", "b")) {
+          if (paraName %in% c("topology", "b", "l", "xi")) {
             updatedDualTree <- proposalValueAndTransKernRatio$value
+          }
+          updatedLogLik <- chainState$logLik
+          # That's where we take care of other conditional priors depending on the parameter whose transition is being processed.
+          if (paraName %in% c("topology", "b")) {
             updatedLogLik <- logLikFun(.convertToPhylo(updatedDualTree), phyDatData, evoParsList)
             if (paraName == "b") { # Prior for "l" is conditioned on "b"
               updatedLogPrior[["l"]] <- logPriorAndTransFunList[["l"]]$logPriorFun(updatedDualTree)
             }
           } else if (paraName == "l") {
-            updatedDualTree <- proposalValueAndTransKernRatio$value
             updatedLogPrior[["topology"]] <- logPriorAndTransFunList[["topology"]]$logPriorFun(updatedDualTree)
           } else if (paraName == "Lambda") {
             updatedLogPrior[["topology"]] <- logPriorAndTransFunList[["topology"]]$logPriorFun(updatedDualTree, Lambda = proposalValueAndTransKernRatio$value)
           } else if (paraName == "xi") {
-            updatedDualTree <- proposalValueAndTransKernRatio$value
-            updatedLogPrior[["l"]] <- logPriorAndTransFunList[["l"]]$logPriorFun(chainState$paraValues$phyloAndTransTree, perSiteClockRate = proposalValueAndTransKernRatio$value)
+            updatedLogPrior[["l"]] <- logPriorAndTransFunList[["l"]]$logPriorFun(updatedDualTree)
           }
           proposalLogPP <- (updatedLogLik + sum(updatedLogPrior)) * 1/MCMCcontrol$temperatureParFun(chainNumber)
           exponentValue <- proposalLogPP - chainState$logPP
@@ -1110,7 +1109,7 @@ prune.tree <- function(phylogeny, node) {
       if (posIndex %in% posToModify) {
         returnValue <- phyloAndTransTree$edge.length[[posIndex]]
         currentXi <- returnValue$xi
-        returnValue$xi <- exp(rnorm(n = numToModify, mean = log(currentXi), sd = logKernelSD))
+        returnValue$xi <- exp(rnorm(n = 1, mean = log(currentXi), sd = logKernelSD))
       }
       returnValue
     })
