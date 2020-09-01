@@ -48,6 +48,7 @@ findBayesianClusters <- function(
   clusterScoringFun = NULL,
   control = list()) {
   # .performBasicChecks()
+  DNAbinData <- as.matrix(DNAbinData)
   perSiteClockRate <- perSiteClockRate/365 # Time is expressed in days in the code, whereas perSiteClockRate is expressed in substitutions per site per *year*.
   # Converting to value in days.
   estRootTime <- NULL
@@ -130,18 +131,14 @@ findBayesianClusters <- function(
     logPPvalues <- sapply(sampledTreesWithPP, FUN = "[[", "logPP")
     clusterValues <- getRegionClusters(phyloAndTransTree = sampledTreesWithPP[[which.max(logPPvalues)]]$paraValues$phyloAndTransTree, clusterRegionCode = clusterRegion)
   }
-  list(chain = sampledTreesWithPP, MAPclusters = clusterValues)
-}
-
-.genStartXi <- function(phyloAndTransTree, numSites) {
-  phyloBranchLengths <- sapply(phyloAndTransTree$edge.length, "[[", "phylogeny")
-  phyloBranchLengths <- replace(phyloBranchLengths, which(phyloBranchLengths == 0), 1/(100 * numSites))
-  transTreeBranchLengths <- sapply(phyloAndTransTree$edge.length, "[[", "transmissionTree")
-  phyloBranchLengths/transTreeBranchLengths
-}
-
-.performBasicChecks <- function() {
-
+  outputValue <- list(chain = sampledTreesWithPP, MAPclusters = clusterValues)
+  if (control$saveData) {
+    outputValue$data <- DNAbinData
+    outputValue$timestampsPOSIXct <- seqsTimestampsPOSIXct
+    outputValue$regionStamps <- seqsRegionStamps
+    outputValue$rootSequenceName <- rootSequenceName
+  }
+  outputValue
 }
 
 #' Control parameters for findBayesianClusters
@@ -167,8 +164,20 @@ findBayesianClusters.control <- function(
   transTreeCondOnPhylo = TRUE,
   controlForGenStartTransmissionTree = .controlForGenStartTransmissionTree(),
   fixedClockRate = TRUE,
-  strictClockModel = TRUE) {
-  list(logLikFun = logLikFun, numMigrationsPoissonPriorMean = numMigrationsPoissonPriorMean, MCMC.control = do.call("MCMC.control", MCMC.control), controlForGenStartTransmissionTree = do.call(".controlForGenStartTransmissionTree", controlForGenStartTransmissionTree), transTreeCondOnPhylo = transTreeCondOnPhylo, fixedClockRate = fixedClockRate, strictClockModel = strictClockModel)
+  strictClockModel = TRUE,
+  saveData = TRUE) {
+  list(logLikFun = logLikFun, numMigrationsPoissonPriorMean = numMigrationsPoissonPriorMean, MCMC.control = do.call("MCMC.control", MCMC.control), controlForGenStartTransmissionTree = do.call(".controlForGenStartTransmissionTree", controlForGenStartTransmissionTree), transTreeCondOnPhylo = transTreeCondOnPhylo, fixedClockRate = fixedClockRate, strictClockModel = strictClockModel, saveData = saveData)
+}
+
+.genStartXi <- function(phyloAndTransTree, numSites) {
+  phyloBranchLengths <- sapply(phyloAndTransTree$edge.length, "[[", "phylogeny")
+  phyloBranchLengths <- replace(phyloBranchLengths, which(phyloBranchLengths == 0), 1/(100 * numSites))
+  transTreeBranchLengths <- sapply(phyloAndTransTree$edge.length, "[[", "transmissionTree")
+  phyloBranchLengths/transTreeBranchLengths
+}
+
+.performBasicChecks <- function() {
+
 }
 
 # evoParsList is a list of varying parameters for the log-likelihood model. Control parameters are hard-coded.
