@@ -61,7 +61,7 @@ findBayesianClusters <- function(
   }
   startingValues <- list()
   # The "edge.length" component of "phylogeny" is a list containing branch lengths for both the transmission tree and phylogeny.
-  chainId <- control$MCMC.control$chainId
+  chainId <- chainIdCopy <- control$MCMC.control$chainId # Copy exists to distinguish a new id (which will be generated later on) and an id used previously.
   if (is.null(control$MCMC.control$folderToSaveIntermediateResults) | is.null(chainId)) {
     control <- do.call('findBayesianClusters.control', control)
     # control$MCMC.control$chainId <- stringi::stri_rand_strings(1, 6)
@@ -101,15 +101,18 @@ findBayesianClusters <- function(
     burnin <- control$MCMC.control$burnin
     n <- control$MCMC.control$n
     stepSize <- control$MCMC.control$stepSize
+    nIterPerSweep <- control$MCMC.control$nIterPerSweep
 
     filename <- paste(control$MCMC.control$folderToSaveIntermediateResults, "/chain_", chainId, "_controlParameters.Rdata", sep = "")
     evoParsFilename <- paste(control$MCMC.control$folderToSaveIntermediateResults, "/chain_", chainId, "_evoParameters.Rdata", sep = "")
     startingValuesFilename <- paste(control$MCMC.control$folderToSaveIntermediateResults, "/chain_", chainId, "_startingValues.Rdata", sep = "")
     load(filename) # This will restore "control" to its original values.
+    control$MCMC.control$chainId <- chainIdCopy
     # The user should be allowed to change these chain parameters, as they do not affect the transitions.
     if (!is.null(n)) control$MCMC.control$n <- n
     if (!is.null(burnin)) control$MCMC.control$burnin <- burnin
     if (!is.null(stepSize)) control$MCMC.control$stepSize <- stepSize
+    if (!is.null(nIterPerSweep)) control$MCMC.control$nIterPerSweep <- nIterPerSweep
 
     load(evoParsFilename) # This will restore evoParsList.
     load(startingValuesFilename) # This will restore startingValues.
@@ -141,8 +144,6 @@ findBayesianClusters <- function(
   outputValue
 }
 
-#' Control parameters for findBayesianClusters
-#'
 #' Control parameters for findBayesianClusters
 #'
 #' @param logLikFun function producing the phylogenetic log-likelihood, cf. presetPML for default values
@@ -409,7 +410,7 @@ phylo <- function(edge, edge.length, tip.label, node.label = NULL) {
           # cat("Para.:", paraName, "\n", sep = " ")
           # cat("transKernRatio:", proposalValueAndTransKernRatio$transKernRatio, "exponent:", exponentValue, "proposal LogPP:", proposalLogPP, "current LogPP:", chainState$logPP, "\n", sep = " ")
           if (runif(1) <= MHratio) {
-            if (paraName %in% c("topology", "l", "b")) {
+            if (paraName %in% c("topology", "l", "b", "xi")) {
               chainState$paraValues$phyloAndTransTree <- updatedDualTree
             } else {
               chainState$paraValues[[paraName]] <- proposalValueAndTransKernRatio$value
@@ -1144,3 +1145,69 @@ getTransTreeEdgeLengths <- function(phyloAndTransTree) {
 getClockRates <- function(phyloAndTransTree) {
   sapply(phyloAndTransTree$edge.length, "[[", "xi")
 }
+
+.getAdjacencyFromVec <- function(clusterIndices) {
+  adjMatrixBase <- diag(length(clusterIndices))
+  rowIndices <- row(adjMatrixBase)[lower.tri(adjMatrixBase)]
+  colIndices <- col(adjMatrixBase)[lower.tri(adjMatrixBase)]
+
+  lowerTriAdj <- lapply(1:(length(clusterIndices) - 1), function(index) {
+    currentValue <- clusterIndices[[index]]
+    theVec <- clusterIndices[(index + 1):length(clusterIndices)] == currentValue
+    theVec
+  })
+  adjMatrix <- Matrix::sparseMatrix(i = rowIndices,
+                            j = colIndices,
+                            x = do.call("c",lowerTriAdj),
+                            symmetric = TRUE)
+  rownames(adjMatrix) <- colnames(adjMatrix) <- names(clusterIndices)
+  adjMatrix
+}
+
+getClustersFromChains <- function(findBayesianClusterResultsList, linkageThreshold = 0.7, regionLabel, nThreads = 1) {
+  if ("chain" %in% names(findBayesianClusterResultsList)) {
+    findBayesianClusterResultsList <- list(findBayesianClusterResultsList)
+  }
+  numElements <- ape::Ntip(findBayesianClusterResultsList[[1]]$chain[[1]]$paraValues$phyloAndTransTree)
+
+  seqNames <- sapply(findBayesianClusterResultsList[[1]]$chain[[1]]$paraValues$phyloAndTransTree$tip.label, "[[", "name")
+  regionNames <- sapply(findBayesianClusterResultsList[[1]]$chain[[1]]$paraValues$phyloAndTransTree$tip.label, "[[", "region")
+  regionSeqNames <- seqNames[regionNames == regionLabel]
+
+  getCombinedAdjacency <- function(chain) {
+    getClusterIndicesInIter <-  function(iterIndex) {
+      seqNames <- sapply(chain[[iterIndex]]$paraValues$phyloAndTransTree$tip.label, "[[", "name")
+      regionNames <- sapply(chain[[iterIndex]]$paraValues$phyloAndTransTree$tip.label, "[[", "region")
+      clusterVec <- getRegionClusters(chain[[iterIndex]]$paraValues$phyloAndTransTree, regionLabel)
+      names(clusterVec) <- seqNames
+      vecIndicesSubset <- clusterVec[regionSeqNames]
+      sortedUniqueValues <- sort(unique(vecIndicesSubset))
+      vecIndicesSubsetRenumbered <- match(vecIndicesSubset, sortedUniqueValues)
+      names(vecIndicesSubsetRenumbered) <- names(vecIndicesSubset)
+      vecIndicesSubsetRenumbered
+    }
+    clusterIndicesPerIter <- lapply(seq_along(chain), FUN = getClusterIndicesInIter)
+
+    combinedAdjacency <- .getAdjacencyFromVec(clusterIndicesPerIter[[1]])
+    if (length(clusterIndicesPerIter) > 1) {
+      for (i in 2:length(clusterIndicesPerIter)) {
+        combinedAdjacency <- combinedAdjacency + .getAdjacencyFromVec(clusterIndicesPerIter[[i]])
+      }
+    }
+    combinedAdjacency/length(clusterIndicesPerIter)
+  }
+
+  if (nThreads == 1) {
+    adjacencyFromEachChain <- lapply(findBayesianClusterResultsList, function(result) getCombinedAdjacency(result$chain))
+  } else {
+    cl <- parallel::makeForkCluster(nThreads)
+    parallel::clusterEvalQ(cl = cl, expr = library(CovidCluster))
+    parallel::parLapply(cl = cl, X = findBayesianClusterResultsList, fun = function(result) getCombinedAdjacency(result$chain))
+  }
+  adjMatrixAcrossChains <- Reduce("+", adjacencyFromEachChain)/length(adjacencyFromEachChain)
+  # adjMatrixAcrossChains@x <- as.numeric(adjMatrixAcrossChains@x > linkageThreshold)
+  roundedAdjMatGraph <- igraph::graph_from_adjacency_matrix(adjMatrixAcrossChains, weighted = TRUE, "undirected")
+  modules <- igraph::cluster_walktrap(graph = roundedAdjMatGraph)
+  modules$membership
+}
+
