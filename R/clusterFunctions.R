@@ -1213,3 +1213,34 @@ getClustersFromChains <- function(findBayesianClusterResultsList, linkageThresho
   modules$membership
 }
 
+getDistanceBasedClusters <- function(phyloAndTransTree, distLimit, regionLabel) {
+  transmissionTree <- .convertToTransTree(phyloAndTransTree)
+  clusterList <- list()
+  distMatrix <- ape::cophenetic.phylo(transmissionTree)
+  exploreFun <- function(nodeNumber) {
+    # Not very memory efficient, but easier to handle than a list of lists with varying depth.
+    if (nodeNumber <= ape::Ntip(transmissionTree)) {
+      if (transmissionTree$tip.label[[nodeNumber]]$region == regionLabel) {
+        clusterList[[length(clusterList) + 1]] <<- nodeNumber
+      }
+      return(NULL)
+    }
+    descendantTips <- phangorn::Descendants(transmissionTree, type = "tips")
+    if (transmissionTree$node[[nodeNumber - ape::Ntip(transmissionTree)]]$region == regionLabel) {
+      uniquePairs <- combn(descendantTips, m = 2)
+      distances <- sapply(1:nrow(uniquePairs), function(pairNumber) distMatrix[uniquePairs[pairNumber, 1], uniquePairs[pairNumber, 2]])
+      if (all(distances < distLimit)) {
+        regions <- sapply(descendantTips, function(tipNumber) {
+          transmissionTree$tip.label[[tipNumber]]$region
+        })
+        clusterList[[length(clusterList) + 1]] <<- descendantTips[regions == regionLabel]
+        return(NULL)
+      }
+    }
+    sapply(descendantTips, exploreFun)
+    NULL
+  }
+  exploreFun(ape::Ntip(transmissionTree) + 1)
+  clusterList
+}
+
