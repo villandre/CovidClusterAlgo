@@ -369,7 +369,7 @@ phylo <- function(edge, edge.length, tip.label, node.label = NULL) {
   print(currentState[[1]]$logLik) # "1" is the cold chain
 
   clusterAddress <- parallel::makeForkCluster(nnodes = MCMCcontrol$nChains)
-  numSweeps <- ceiling((MCMCcontrol$n + MCMCcontrol$burnin - startIterNum + 1)/MCMCcontrol$nIterPerSweep)
+  totalNumSweeps <- ceiling((MCMCcontrol$n + MCMCcontrol$burnin)/MCMCcontrol$nIterPerSweep)
   sweepFun <- function(sweepNum) {
     chainFun <- function(chainNumber) {
       chainState <- currentState[[chainNumber]]
@@ -450,7 +450,8 @@ phylo <- function(edge, edge.length, tip.label, node.label = NULL) {
     }
     # }
   }
-  lapply(1:numSweeps, FUN = sweepFun)
+  currentSweep <- (startIterNum - 1)/MCMCcontrol$nIterPerSweep + 1
+  lapply(currentSweep:totalNumSweeps, FUN = sweepFun)
   cat("MCMC complete. Finalising... \n")
   lastIterToDrop <- floor(MCMCcontrol$burnin/MCMCcontrol$nIterPerSweep)
   elementsToDrop <- 0
@@ -1200,13 +1201,13 @@ getClustersFromChains <- function(findBayesianClusterResultsList, linkageThresho
   if (nThreads == 1) {
     adjacencyFromEachChain <- lapply(findBayesianClusterResultsList, function(result) getCombinedAdjacency(result$chain))
   } else {
-    cl <- parallel::makeForkCluster(nThreads)
+    cl <- parallel::makePSOCKcluster(nThreads)
     parallel::clusterEvalQ(cl = cl, expr = library(CovidCluster))
     adjacencyFromEachChain <- parallel::parLapply(cl = cl, X = findBayesianClusterResultsList, fun = function(result) getCombinedAdjacency(result$chain))
+    parallel::stopCluster(cl)
   }
   adjMatrixAcrossChains <- Reduce("+", adjacencyFromEachChain)/length(adjacencyFromEachChain)
   adjMatrixAcrossChains@x <- as.numeric(adjMatrixAcrossChains@x >= linkageThreshold)
-  # adjMatrixAcrossChains@x <- as.numeric(adjMatrixAcrossChains@x > linkageThreshold)
   roundedAdjMatGraph <- igraph::graph_from_adjacency_matrix(adjMatrixAcrossChains, weighted = NULL, "undirected")
   modules <- igraph::cluster_walktrap(graph = roundedAdjMatGraph)
   modules$membership
