@@ -1164,7 +1164,7 @@ getClockRates <- function(phyloAndTransTree) {
   adjMatrix
 }
 
-getClustersFromChains <- function(findBayesianClusterResultsList, linkageThreshold = 0.7, regionLabel, nThreads = 1) {
+getClustersFromChains <- function(findBayesianClusterResultsList, linkageThreshold = 0.5, regionLabel, nThreads = 1) {
   if ("chain" %in% names(findBayesianClusterResultsList)) {
     findBayesianClusterResultsList <- list(findBayesianClusterResultsList)
   }
@@ -1205,8 +1205,9 @@ getClustersFromChains <- function(findBayesianClusterResultsList, linkageThresho
     parallel::parLapply(cl = cl, X = findBayesianClusterResultsList, fun = function(result) getCombinedAdjacency(result$chain))
   }
   adjMatrixAcrossChains <- Reduce("+", adjacencyFromEachChain)/length(adjacencyFromEachChain)
+  adjMatrixAcrossChains@x <- as.numeric(adjMatrixAcrossChains@x > linkageThreshold)
   # adjMatrixAcrossChains@x <- as.numeric(adjMatrixAcrossChains@x > linkageThreshold)
-  roundedAdjMatGraph <- igraph::graph_from_adjacency_matrix(adjMatrixAcrossChains, weighted = TRUE, "undirected")
+  roundedAdjMatGraph <- igraph::graph_from_adjacency_matrix(adjMatrixAcrossChains, weighted = NULL, "undirected")
   modules <- igraph::cluster_walktrap(graph = roundedAdjMatGraph)
   modules$membership
 }
