@@ -1205,7 +1205,7 @@ getClustersFromChains <- function(findBayesianClusterResultsList, linkageThresho
     parallel::parLapply(cl = cl, X = findBayesianClusterResultsList, fun = function(result) getCombinedAdjacency(result$chain))
   }
   adjMatrixAcrossChains <- Reduce("+", adjacencyFromEachChain)/length(adjacencyFromEachChain)
-  adjMatrixAcrossChains@x <- as.numeric(adjMatrixAcrossChains@x > linkageThreshold)
+  adjMatrixAcrossChains@x <- as.numeric(adjMatrixAcrossChains@x >= linkageThreshold)
   # adjMatrixAcrossChains@x <- as.numeric(adjMatrixAcrossChains@x > linkageThreshold)
   roundedAdjMatGraph <- igraph::graph_from_adjacency_matrix(adjMatrixAcrossChains, weighted = NULL, "undirected")
   modules <- igraph::cluster_walktrap(graph = roundedAdjMatGraph)
