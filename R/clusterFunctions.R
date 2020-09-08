@@ -1202,7 +1202,7 @@ getClustersFromChains <- function(findBayesianClusterResultsList, linkageThresho
   } else {
     cl <- parallel::makeForkCluster(nThreads)
     parallel::clusterEvalQ(cl = cl, expr = library(CovidCluster))
-    parallel::parLapply(cl = cl, X = findBayesianClusterResultsList, fun = function(result) getCombinedAdjacency(result$chain))
+    adjacencyFromEachChain <- parallel::parLapply(cl = cl, X = findBayesianClusterResultsList, fun = function(result) getCombinedAdjacency(result$chain))
   }
   adjMatrixAcrossChains <- Reduce("+", adjacencyFromEachChain)/length(adjacencyFromEachChain)
   adjMatrixAcrossChains@x <- as.numeric(adjMatrixAcrossChains@x >= linkageThreshold)
