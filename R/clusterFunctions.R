@@ -1213,10 +1213,13 @@ getClustersFromChains <- function(findBayesianClusterResultsList, linkageThresho
   modules$membership
 }
 
-getDistanceBasedClusters <- function(phyloAndTransTree, distLimit, regionLabel) {
+getDistanceBasedClusters <- function(phyloAndTransTree, distLimit, regionLabel, criterion = c("mrca", "cophenetic")) {
+  criterion <- criterion[[1]]
+  if (!criterion %in% c("cophenetic", "mrca")) {
+    stop("Clustering criterion must be either 'cophenetic' or 'mrca'.")
+  }
   transmissionTree <- .convertToTransTree(phyloAndTransTree)
   clusterList <- list()
-  distMatrix <- ape::cophenetic.phylo(transmissionTree)
   exploreFun <- function(nodeNumber) {
     # Not very memory efficient, but easier to handle than a list of lists with varying depth.
     if (nodeNumber <= ape::Ntip(transmissionTree)) {
@@ -1225,22 +1228,60 @@ getDistanceBasedClusters <- function(phyloAndTransTree, distLimit, regionLabel) 
       }
       return(NULL)
     }
-    descendantTips <- phangorn::Descendants(transmissionTree, type = "tips")
+    descendantTips <- phangorn::Descendants(transmissionTree, node = nodeNumber, type = "tips")[[1]]
+    descendantTipsRegions <- sapply(descendantTips, FUN = function(tipNum) transmissionTree$tip.label[[tipNum]]$region)
     if (transmissionTree$node[[nodeNumber - ape::Ntip(transmissionTree)]]$region == regionLabel) {
-      uniquePairs <- combn(descendantTips, m = 2)
-      distances <- sapply(1:nrow(uniquePairs), function(pairNumber) distMatrix[uniquePairs[pairNumber, 1], uniquePairs[pairNumber, 2]])
+      distances <- NULL
+      if (identical(criterion, "cophenetic")) {
+        descendantTips <- descendantTips[descendantTipsRegions == regionLabel]
+        distances <- dist.tipPairs.mrca(phylogeny = transmissionTree, tipNumbers = descendantTips)$distance
+      } else {
+        distances <- dist.tips.mrca(phylogeny = transmissionTree, tipNumbers = descendantTips)
+        descendantTips <- descendantTips[descendantTipsRegions == regionLabel]
+        distances <- distances[descendantTipsRegions == regionLabel]
+      }
       if (all(distances < distLimit)) {
-        regions <- sapply(descendantTips, function(tipNumber) {
-          transmissionTree$tip.label[[tipNumber]]$region
-        })
-        clusterList[[length(clusterList) + 1]] <<- descendantTips[regions == regionLabel]
+        clusterList[[length(clusterList) + 1]] <<- descendantTips
         return(NULL)
       }
     }
-    sapply(descendantTips, exploreFun)
+    sapply(phangorn::Children(transmissionTree, node = nodeNumber), exploreFun)
     NULL
   }
   exploreFun(ape::Ntip(transmissionTree) + 1)
   clusterList
+}
+
+dist.node.ancestor <- function(phylogeny, node1, node2) {
+  ancestorsNode1 <- phangorn::Ancestors(phylogeny, node1)
+  ancestorsNode2 <- phangorn::Ancestors(phylogeny, node2)
+  node1ancestorNode2 <- node1 %in% ancestorsNode2
+  node2ancestorNode1 <- node2 %in% ancestorsNode1
+  if (!(node1ancestorNode2 | node2ancestorNode1)) {
+    stop("node1 and node2 are not on the same lineage (or are invalid numbers). \n")
+  }
+  if (node1ancestorNode2) {
+    node2copy <- node2
+    node2 <- node1
+    node1 <- node2copy
+    ancestorsNode1 <- ancestorsNode2
+  }
+  ancestorPos <- match(node2, ancestorsNode1)
+  nodesToProcess <- c(node1, ancestorsNode1[ancestorPos - 1])
+  branchLengths <- phylogeny$edge.length[match(nodesToProcess, phylogeny$edge[ , 2])]
+  sum(branchLengths)
+}
+
+dist.tipPairs.mrca <- function(phylogeny, tipNumbers) {
+  allCombn <- combn(seq_along(tipNumbers), 2)
+  distanceByPair <- apply(allCombn, 2, function(indexPair) {
+    sum(dist.tips.mrca(phylogeny, indexPair))
+  })
+  data.frame(node1 = allCombn[1, ], node2 = allCombn[2, ], distance = distanceByPair)
+}
+
+dist.tips.mrca <- function(phylogeny, tipNumbers) {
+  tipsMRCA <- ape::getMRCA(phylogeny, tipNumbers)
+  sapply(tipNumbers, function(tipNum) dist.node.ancestor(phylogeny, tipNum, tipsMRCA))
 }
 
