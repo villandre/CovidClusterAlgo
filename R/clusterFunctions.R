@@ -276,6 +276,9 @@ presetPML <- function(phyloObj, phyDatObj, evoParsList) {
   }
 
   optimResult <- nloptr::lbfgs(x0 = log(startWithin), fn = funForOptim)
+  if (optimResult$convergence < 0) {
+    stop("Could not generate starting values for region-specific coalescence rates. Stopping...")
+  }
   rescaledResults <- exp(optimResult$par)
   names(rescaledResults) <- regionNames
   rescaledResults
@@ -429,15 +432,17 @@ phylo <- function(edge, edge.length, tip.label, node.label = NULL) {
     # currentState <<- lapply(X = 1:MCMCcontrol$nChains, FUN = chainFun)
     # Processing exchanges between chains...
     # Based on https://www.cs.ubc.ca/~nando/540b-2011/projects/8.pdf
-    for (k in 1:(MCMCcontrol$nChains - 1)) {
-      logExpr <- MCMCcontrol$temperatureParFun(k + 1)/MCMCcontrol$temperatureParFun(k) * currentState[[k + 1]]$logPP + MCMCcontrol$temperatureParFun(k)/MCMCcontrol$temperatureParFun(k + 1) * currentState[[k]]$logPP - (currentState[[k]]$logPP + currentState[[k + 1]]$logPP)
-      swapRatio <- exp(logExpr)
-      cat("Swap ratio:", swapRatio, "\n")
-      if (runif(1) < swapRatio) {
-        cat("Swapping chains", k, "and", k + 1, "\n")
-        currentState[c(k, k + 1)] <- currentState[c(k + 1, k)]
-        currentState[[k]]$logPP <- currentState[[k]]$logPP * MCMCcontrol$temperatureParFun(k + 1)/MCMCcontrol$temperatureParFun(k)
-        currentState[[k + 1]]$logPP <- currentState[[k + 1]]$logPP * MCMCcontrol$temperatureParFun(k)/MCMCcontrol$temperatureParFun(k + 1)
+    if (MCMCcontrol$nChains > 1) {
+      for (k in 1:(MCMCcontrol$nChains - 1)) {
+        logExpr <- MCMCcontrol$temperatureParFun(k + 1)/MCMCcontrol$temperatureParFun(k) * currentState[[k + 1]]$logPP + MCMCcontrol$temperatureParFun(k)/MCMCcontrol$temperatureParFun(k + 1) * currentState[[k]]$logPP - (currentState[[k]]$logPP + currentState[[k + 1]]$logPP)
+        swapRatio <- exp(logExpr)
+        cat("Swap ratio:", swapRatio, "\n")
+        if (runif(1) < swapRatio) {
+          cat("Swapping chains", k, "and", k + 1, "\n")
+          currentState[c(k, k + 1)] <- currentState[c(k + 1, k)]
+          currentState[[k]]$logPP <- currentState[[k]]$logPP * MCMCcontrol$temperatureParFun(k + 1)/MCMCcontrol$temperatureParFun(k)
+          currentState[[k + 1]]$logPP <- currentState[[k + 1]]$logPP * MCMCcontrol$temperatureParFun(k)/MCMCcontrol$temperatureParFun(k + 1)
+        }
       }
     }
     cat("Processed MCMC iteration ", sweepNum * MCMCcontrol$nIterPerSweep, ".\n", sep = "")
@@ -488,7 +493,7 @@ phylo <- function(edge, edge.length, tip.label, node.label = NULL) {
 #'  MCMC.control(n = 1e6, stepSize = 100, burnin = 1e5)
 #' }
 #' @export
-MCMC.control <- function(n = 2e5, nIterPerSweep = 100, nChains = 1, temperatureParFun = function(x) x, stepSize = 50, burnin = 1e4, folderToSaveIntermediateResults = NULL, chainId = NULL, coalRateKernelSD = 0.5, print.frequency = 10, phyloBranchLengthsLogTransKernSD = log(1.05), propPhyloBranchesToModify = 0.1, transTreeTuningPara = 0.1, propTransTreeBranchesToModify = 0.1, propClockRatesToModify = 0.1, rootTransitionPar = 15, transTreeBranchLengthsGammaShapePar = 1, clockRatesLogKernelSD = 1) {
+MCMC.control <- function(n = 2e5, nIterPerSweep = 100, nChains = 1, temperatureParFun = function(x) x, stepSize = 50, burnin = 1e4, folderToSaveIntermediateResults = NULL, chainId = NULL, coalRateKernelSD = 0.5, print.frequency = 10, phyloBranchLengthsLogTransKernSD = log(1.05), propPhyloBranchesToModify = 0.1, transTreeTuningPara = 0.99, propTransTreeBranchesToModify = 0.1, propClockRatesToModify = 0.1, rootTransitionPar = 15, transTreeBranchLengthsGammaShapePar = 1, clockRatesLogKernelSD = 1) {
   if (temperatureParFun(1) != 1) {
     stop("temperatureParFun(1) must return '1' as it is for the cold chain! Please fix this (or leave the default value) and re-run the code. \n")
   }
