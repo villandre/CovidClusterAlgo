@@ -1218,7 +1218,7 @@ getClustersFromChains <- function(findBayesianClusterResultsList, linkageThresho
   modules$membership
 }
 
-getDistanceBasedClusters <- function(phyloAndTransTree, distLimit, regionLabel, criterion = c("mrca", "cophenetic")) {
+getDistanceBasedClusters <- function(phyloAndTransTree, distLimit, regionLabel, criterion = c("mrca", "cophenetic", "consecutive")) {
   criterion <- criterion[[1]]
   if (!criterion %in% c("cophenetic", "mrca")) {
     stop("Clustering criterion must be either 'cophenetic' or 'mrca'.")
@@ -1240,10 +1240,21 @@ getDistanceBasedClusters <- function(phyloAndTransTree, distLimit, regionLabel, 
       if (identical(criterion, "cophenetic")) {
         descendantTips <- descendantTips[descendantTipsRegions == regionLabel]
         distances <- dist.tipPairs.mrca(phylogeny = transmissionTree, tipNumbers = descendantTips)$distance
-      } else {
+      } else if (identical(criterion, "mrca")) {
         distances <- dist.tips.mrca(phylogeny = transmissionTree, tipNumbers = descendantTips)
         descendantTips <- descendantTips[descendantTipsRegions == regionLabel]
         distances <- distances[descendantTipsRegions == regionLabel]
+      } else if (identical(criterion, "consecutive")) {
+        nodeDescendants <- phangorn::Descendants(transmissionTree, nodeNumber, "all")[[1]]
+        nodeDescendants <- nodeDescendants[nodeDescendants > ape::Ntip(transmissionTree)]
+        nodesToConsiderTest <- sapply(nodeDescendants, function(nodeNum) {
+          currentRegion <- transmissionTree$node.label[[nodeNum - ape::Ntip(transmissionTree)]]$region
+          parentNode <- phangorn::Ancestors(transmissionTree, nodeNum, "parent")
+          parentRegion <- transmissionTree$node.label[[parentNode - ape::Ntip(transmissionTree)]]$region
+          (currentRegion == regionLabel) & (parentRegion == regionLabel)
+        })
+        localDescendantTips <- descendantTips[nodesToConsiderTest]
+        distances <- transmissionTree$edge.length[match(localDescendantTips, transmissionTree$edge[ , 2])]
       }
       if (all(distances < distLimit)) {
         clusterList[[length(clusterList) + 1]] <<- descendantTips
