@@ -917,15 +917,21 @@ MCMC.control <- function(n = 2e5, nIterPerSweep = 100, nChains = 1, temperatureP
   list(value = exp(logNewState), transKernRatio = 1) # The Gaussian transition kernel is symmetrical.
 }
 
-plotTransmissionTree <- function(dualPhyloAndTransmissionTree, timestamps, plotTipLabels = FALSE, plotTitle = NULL, device = jpeg, filename, argsForDevice = list(), argsForPlotPhylo = NULL) {
+plotTransmissionTree <- function(dualPhyloAndTransmissionTree, timestamps, plotTipLabels = FALSE, plotTitle = NULL, showLabelTime = FALSE, showLabelRegion = FALSE, device = jpeg, filename, argsForDevice = list(), argsForPlotPhylo = NULL, showLegend = TRUE) {
   transmissionTree <- .convertToTransTree(dualPhyloAndTransmissionTree)
 
   transmissionTree$node.label <- sapply(transmissionTree$node.label, function(x) x$time)
   transmissionTree$tip.label <- sapply(transmissionTree$tip.label, function(x) {
-    seqLabels <- stringr::str_c("Name = ", x$name)
-    timeLabels <- stringr::str_c("Time = ", x$time)
-    regionLabels <- stringr::str_c("Region = ", x$region)
-    stringr::str_c(seqLabels, timeLabels, regionLabels, sep = ", ")
+    seqLabels <- x$name
+    if (showLabelTime) {
+      timeLabels <- stringr::str_c("Time = ", x$time)
+      seqLabels <- stringr::str_c(seqLabels, timeLabels, sep = ", ")
+    }
+    if (showLabelRegion) {
+      regionLabels <- stringr::str_c("Region = ", x$region)
+      stringr::str_c(seqLabels, regionLabels, sep = ", ")
+    }
+    seqLabels
   })
 
   transmissionTree <- treeio::as.treedata(transmissionTree)
@@ -954,6 +960,9 @@ plotTransmissionTree <- function(dualPhyloAndTransmissionTree, timestamps, plotT
   }
   if (!is.null(plotTitle)) {
     plottedTree <- plottedTree + ggplot2::ggtitle(plotTitle)
+  }
+  if (!showLegend) {
+    plottedTree <- plottedTree + ggplot2::theme(legend.position = "none")
   }
   do.call(ggtree::ggsave, c(list(filename = filename, plot = plottedTree), argsForDevice))
   NULL
@@ -1011,9 +1020,16 @@ getRegionClusters <- function(phyloAndTransTree, clusterRegionCode) {
   list(plotTipLabels = plotTipLabels, device = device, argsForDevice = argsForDevice, argsForPlotPhylo = argsForPlotPhylo)
 }
 
-plotClusters <- function(phyloAndTransTree, chainID = NULL, timestamps, clusterRegionCode, minClusterSize = 5, folderName, controlListForPlotTransmissionTree = list()) {
-  regionClusters <- getRegionClusters(phyloAndTransTree = phyloAndTransTree, clusterRegionCode)
-  clusterSizes <- table(regionClusters)
+plotClusters <- function(clusterList, phyloAndTransTree, chainID = NULL, timestamps, clusterRegionCode, minClusterSize = 5, folderName, controlListForPlotTransmissionTree = list()) {
+  tipNames <- sapply(phyloAndTransTree$tip.label, "[[", "name")
+  clusterIndicesList <- lapply(seq_along(clusterList), function(x) {
+    clusterIndexVec <- rep(x, length(clusterList[[x]]))
+    names(clusterIndexVec) <- clusterList[[x]]
+    clusterIndexVec
+  })
+  clusterIndices <- do.call("c", clusterIndicesList)
+  clusterIndices <- clusterIndices[tipNames]
+  clusterSizes <- table(clusterIndices)
   clusterSizes <- clusterSizes[-1] # First element in the table is for unclustered sequences
   keepClusterNumbers <- as.numeric(names(clusterSizes)[clusterSizes >= minClusterSize])
   pruneFunction <- function(treeObj) {
@@ -1040,7 +1056,7 @@ plotClusters <- function(phyloAndTransTree, chainID = NULL, timestamps, clusterR
   }
 
   getClusterTree <- function(clusterNumber) {
-    tipNums <- which(regionClusters == clusterNumber)
+    tipNums <- which(clusterIndices == clusterNumber)
     mrcaNum <- ape::getMRCA(phyloAndTransTree, tipNums)
     subTree <- ape::extract.clade(phyloAndTransTree, mrcaNum)
     pruneFunction(subTree)
@@ -1051,7 +1067,7 @@ plotClusters <- function(phyloAndTransTree, chainID = NULL, timestamps, clusterR
   plotNames <- paste(clusterRegionCode, ": cluster ", keepClusterNumbers, sep = "")
 
   plotFunction <- function(treeObj, filename, plotTitle) {
-    do.call(plotTransmissionTree, args = c(list(dualPhyloAndTransmissionTree = treeObj, timestamps = timestamps, filename = filename, plotTitle = plotTitle), controlArgsForPlotTransmissionTree))
+    do.call(plotTransmissionTree, args = c(list(dualPhyloAndTransmissionTree = treeObj, timestamps = timestamps, filename = filename, plotTitle = plotTitle), controlArgsForPlotTransmissionTree, showLegend = FALSE))
     NULL
   }
   lapply(seq_along(clusterTrees), FUN = function(clusterIndex) {
@@ -1220,51 +1236,65 @@ getClustersFromChains <- function(findBayesianClusterResultsList, linkageThresho
 
 getDistanceBasedClusters <- function(phyloAndTransTree, distLimit, regionLabel, criterion = c("mrca", "cophenetic", "consecutive")) {
   criterion <- criterion[[1]]
-  if (!criterion %in% c("cophenetic", "mrca")) {
-    stop("Clustering criterion must be either 'cophenetic' or 'mrca'.")
+  if (!criterion %in% c("cophenetic", "mrca", "consecutive")) {
+    stop("Clustering criterion must be either 'cophenetic', 'mrca', or 'consecutive'.")
   }
   transmissionTree <- .convertToTransTree(phyloAndTransTree)
   clusterList <- list()
-  exploreFun <- function(nodeNumber) {
+  nodesToCheck <- ape::Ntip(transmissionTree) + 1
+  repeat {
+    incrementNodesToCheckFlag <- TRUE
+    nodeNumber <- nodesToCheck[[1]]
     # Not very memory efficient, but easier to handle than a list of lists with varying depth.
     if (nodeNumber <= ape::Ntip(transmissionTree)) {
       if (transmissionTree$tip.label[[nodeNumber]]$region == regionLabel) {
-        clusterList[[length(clusterList) + 1]] <<- nodeNumber
+        clusterList[[length(clusterList) + 1]] <- transmissionTree$tip.label[[nodeNumber]]$name
       }
-      return(NULL)
+      incrementNodesToCheckFlag <- FALSE
+    } else {
+      if (transmissionTree$node[[nodeNumber - ape::Ntip(transmissionTree)]]$region == regionLabel) {
+        allDescendantTips <- phangorn::Descendants(transmissionTree, node = nodeNumber, type = "tips")[[1]]
+        allDescendantTipsRegions <- sapply(allDescendantTips, FUN = function(tipNum) transmissionTree$tip.label[[tipNum]]$region)
+        descendantTips <- allDescendantTips[allDescendantTipsRegions == regionLabel]
+        distances <- NULL
+        if (identical(criterion, "cophenetic")) {
+          distances <- dist.tipPairs.mrca(phylogeny = transmissionTree, tipNumbers = descendantTips)$distance
+        } else if (identical(criterion, "mrca")) {
+          # distances <- dist.tips.mrca(phylogeny = transmissionTree, tipNumbers = allDescendantTips) # The MRCA should be computed based on all tips, including those not belonging to the target region.
+          # distances <- distances[allDescendantTipsRegions == regionLabel]
+          if (length(descendantTips) > 1) {
+            distances <- dist.tips.mrca(phylogeny = transmissionTree, tipNumbers = descendantTips)
+          } else {
+            distances <- 0 # We're dealing with a singleton. Should be noted as such.
+          }
+        } else if (identical(criterion, "consecutive")) {
+          nodeDescendants <- phangorn::Descendants(transmissionTree, nodeNumber, "all")
+          nodeDescendants <- nodeDescendants[nodeDescendants > ape::Ntip(transmissionTree)]
+          nodesToConsiderTest <- sapply(nodeDescendants, function(nodeNum) {
+            currentRegion <- transmissionTree$node.label[[nodeNum - ape::Ntip(transmissionTree)]]$region
+            parentNode <- phangorn::Ancestors(transmissionTree, nodeNum, "parent")
+            parentRegion <- transmissionTree$node.label[[parentNode - ape::Ntip(transmissionTree)]]$region
+            (currentRegion == regionLabel) & (parentRegion == regionLabel)
+          })
+          if (length(nodesToConsiderTest) > 0) {
+            distances <- transmissionTree$edge.length[match(nodeDescendants[nodesToConsiderTest], transmissionTree$edge[ , 2])]
+          } else {
+            distances <- Inf # We've reached a node whose children are all tips. The "consecutive" criterion excludes that these structures could be clusters.
+          }
+        }
+        if (all(distances < distLimit)) {
+          clusterList[[length(clusterList) + 1]] <- sapply(descendantTips, function(x) transmissionTree$tip.label[[x]]$name)
+          incrementNodesToCheckFlag <- FALSE
+        }
+      }
     }
-    descendantTips <- phangorn::Descendants(transmissionTree, node = nodeNumber, type = "tips")[[1]]
-    descendantTipsRegions <- sapply(descendantTips, FUN = function(tipNum) transmissionTree$tip.label[[tipNum]]$region)
-    if (transmissionTree$node[[nodeNumber - ape::Ntip(transmissionTree)]]$region == regionLabel) {
-      distances <- NULL
-      if (identical(criterion, "cophenetic")) {
-        descendantTips <- descendantTips[descendantTipsRegions == regionLabel]
-        distances <- dist.tipPairs.mrca(phylogeny = transmissionTree, tipNumbers = descendantTips)$distance
-      } else if (identical(criterion, "mrca")) {
-        distances <- dist.tips.mrca(phylogeny = transmissionTree, tipNumbers = descendantTips)
-        descendantTips <- descendantTips[descendantTipsRegions == regionLabel]
-        distances <- distances[descendantTipsRegions == regionLabel]
-      } else if (identical(criterion, "consecutive")) {
-        nodeDescendants <- phangorn::Descendants(transmissionTree, nodeNumber, "all")[[1]]
-        nodeDescendants <- nodeDescendants[nodeDescendants > ape::Ntip(transmissionTree)]
-        nodesToConsiderTest <- sapply(nodeDescendants, function(nodeNum) {
-          currentRegion <- transmissionTree$node.label[[nodeNum - ape::Ntip(transmissionTree)]]$region
-          parentNode <- phangorn::Ancestors(transmissionTree, nodeNum, "parent")
-          parentRegion <- transmissionTree$node.label[[parentNode - ape::Ntip(transmissionTree)]]$region
-          (currentRegion == regionLabel) & (parentRegion == regionLabel)
-        })
-        localDescendantTips <- descendantTips[nodesToConsiderTest]
-        distances <- transmissionTree$edge.length[match(localDescendantTips, transmissionTree$edge[ , 2])]
-      }
-      if (all(distances < distLimit)) {
-        clusterList[[length(clusterList) + 1]] <<- descendantTips
-        return(NULL)
-      }
+    if (incrementNodesToCheckFlag) {
+      nodesToCheck <- c(nodesToCheck, phangorn::Children(transmissionTree, node = nodeNumber))
     }
-    sapply(phangorn::Children(transmissionTree, node = nodeNumber), exploreFun)
-    NULL
+
+    nodesToCheck <- nodesToCheck[-1]
+    if (length(nodesToCheck) == 0) break
   }
-  exploreFun(ape::Ntip(transmissionTree) + 1)
   clusterList
 }
 
