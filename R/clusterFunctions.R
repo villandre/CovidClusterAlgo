@@ -370,8 +370,9 @@ phylo <- function(edge, edge.length, tip.label, node.label = NULL) {
   print(currentState[[1]]$logPrior) # "1" is the cold chain
   cat("Starting value for log-lik.: \n")
   print(currentState[[1]]$logLik) # "1" is the cold chain
-
-  clusterAddress <- parallel::makeForkCluster(nnodes = MCMCcontrol$nChains)
+  if (MCMCcontrol$nChains > 1) {
+    clusterAddress <- parallel::makeForkCluster(nnodes = MCMCcontrol$nChains)
+  }
   totalNumSweeps <- ceiling((MCMCcontrol$n + MCMCcontrol$burnin)/MCMCcontrol$nIterPerSweep)
   sweepFun <- function(sweepNum) {
     chainFun <- function(chainNumber) {
@@ -427,12 +428,10 @@ phylo <- function(edge, edge.length, tip.label, node.label = NULL) {
       }
       chainState
     }
-
-    currentState <<- parallel::parLapply(X = 1:MCMCcontrol$nChains, cl = clusterAddress, fun = chainFun)
-    # currentState <<- lapply(X = 1:MCMCcontrol$nChains, FUN = chainFun)
-    # Processing exchanges between chains...
-    # Based on https://www.cs.ubc.ca/~nando/540b-2011/projects/8.pdf
     if (MCMCcontrol$nChains > 1) {
+      currentState <<- parallel::parLapply(X = 1:MCMCcontrol$nChains, cl = clusterAddress, fun = chainFun)
+      # Processing exchanges between chains...
+      # Based on https://www.cs.ubc.ca/~nando/540b-2011/projects/8.pdf
       for (k in 1:(MCMCcontrol$nChains - 1)) {
         logExpr <- MCMCcontrol$temperatureParFun(k + 1)/MCMCcontrol$temperatureParFun(k) * currentState[[k + 1]]$logPP + MCMCcontrol$temperatureParFun(k)/MCMCcontrol$temperatureParFun(k + 1) * currentState[[k]]$logPP - (currentState[[k]]$logPP + currentState[[k + 1]]$logPP)
         swapRatio <- exp(logExpr)
@@ -444,6 +443,8 @@ phylo <- function(edge, edge.length, tip.label, node.label = NULL) {
           currentState[[k + 1]]$logPP <- currentState[[k + 1]]$logPP * MCMCcontrol$temperatureParFun(k)/MCMCcontrol$temperatureParFun(k + 1)
         }
       }
+    } else {
+      currentState <<- lapply(X = 1:MCMCcontrol$nChains, FUN = chainFun)
     }
     cat("Processed MCMC iteration ", sweepNum * MCMCcontrol$nIterPerSweep, ".\n", sep = "")
     cat("Current log-PP:", currentState[[1]]$logPP, "\n\n")
@@ -831,21 +832,24 @@ MCMC.control <- function(n = 2e5, nIterPerSweep = 100, nChains = 1, temperatureP
 }
 
 .transTreeBranchLengthsConditionalLogPrior <- function(phyloAndTransTree, numSites, gammaShapePar = 1) {
-  transTreeSingleBranchLengthConditionalLogPrior <- function(branchIndex) {
-    perSiteClockRate <- sapply(phyloAndTransTree$edge.length, "[[", "xi")
-    phyloBranchLength <- phyloAndTransTree$edge.length[[branchIndex]]$phylogeny
-    transTreeBranchLength <- phyloAndTransTree$edge.length[[branchIndex]]$transmissionTree
-
-    if (identical(phyloBranchLength, 0)) {
-      # logProb <- dexp(transTreeBranchLength, rate = 2 * perSiteClockRate[[branchIndex]] * numSites, log = TRUE)
-      logProb <- dgamma(transTreeBranchLength, shape = gammaShapePar, scale = 1/(100 * perSiteClockRate[[branchIndex]] * numSites * gammaShapePar), log = TRUE)
-    } else {
-      # logProb <- dexp(transTreeBranchLength, rate = perSiteClockRate[[branchIndex]]/phyloBranchLength, log = TRUE)
-      logProb <- dgamma(transTreeBranchLength, shape = gammaShapePar, scale = phyloBranchLength/(perSiteClockRate[[branchIndex]] * gammaShapePar), log = TRUE)
-    }
-    logProb
-  }
-  sum(sapply(seq_along(phyloAndTransTree$edge.length), FUN = transTreeSingleBranchLengthConditionalLogPrior))
+  perSiteClockRate <- sapply(phyloAndTransTree$edge.length, "[[", "xi")
+  phyloBranchLengths <- sapply(phyloAndTransTree$edge.length, "[[", "phylogeny")
+  transTreeBranchLengths <- sapply(phyloAndTransTree$edge.length, "[[", "transmissionTree")
+  scaleVector <- phyloBranchLengths/(perSiteClockRate * gammaShapePar)
+  zeroPos <- which(scaleVector == 0)
+  scaleVector <- replace(scaleVector, zeroPos, 1/(100 * perSiteClockRate[zeroPos] * numSites * gammaShapePar))
+  sum(dgamma(transTreeBranchLengths, shape = rep(gammaShapePar, length(transTreeBranchLengths)), scale = scaleVector, log = TRUE))
+  # transTreeSingleBranchLengthConditionalLogPrior <- function(branchIndex) {
+  #   if (identical(phyloBranchLength, 0)) {
+  #     # logProb <- dexp(transTreeBranchLength, rate = 2 * perSiteClockRate[[branchIndex]] * numSites, log = TRUE)
+  #     logProb <- dgamma(transTreeBranchLength, shape = gammaShapePar, scale = 1/(100 * perSiteClockRate[[branchIndex]] * numSites * gammaShapePar), log = TRUE)
+  #   } else {
+  #     # logProb <- dexp(transTreeBranchLength, rate = perSiteClockRate[[branchIndex]]/phyloBranchLength, log = TRUE)
+  #     logProb <- dgamma(transTreeBranchLength, shape = gammaShapePar, scale = phyloBranchLength/(perSiteClockRate[[branchIndex]] * gammaShapePar), log = TRUE)
+  #   }
+  #   logProb
+  # }
+  # sum(sapply(seq_along(phyloAndTransTree$edge.length), FUN = transTreeSingleBranchLengthConditionalLogPrior))
 }
 
 .transTreeBranchLengthsTransFun <- function(phyloAndTransTree, tuningPara = 0.1, propToModify = 0.1, rootTransitionPar = 15) {
