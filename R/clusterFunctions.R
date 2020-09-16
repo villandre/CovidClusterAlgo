@@ -214,7 +214,7 @@ presetPML <- function(phyloObj, phyDatObj, evoParsList) {
     list(name = seqName, time = as.numeric(seqsTimestampsPOSIXct[[seqName]])/86400, region = seqsRegionStamps[[seqName]]) # Time is re-expressed in days.
   })
 
-  transmissionTree$node.label <- lapply(1:numNodes, function(x) list(time = NULL, region = NULL))
+  transmissionTree$node.label <- lapply(1:numNodes, function(x) list(time = NULL, region = NA))
   recursiveFunction <- function(nodeIndex) {
     childrenIndices <- phangorn::Children(transmissionTree, node = nodeIndex)
     resolvedChildrenTime <- sapply(childrenIndices, function(childIndex) {
@@ -746,73 +746,54 @@ MCMC.control <- function(n = 2e5, nIterPerSweep = 100, nChains = 1, temperatureP
 }
 
 .identifyNodeRegions <- function(transmissionTree) {
-  numTips <- length(transmissionTree$tip.label)
-  resolveLowerLevels <- function(nodeNumber, resolveValue) {
-    currentNodeRegion <- transmissionTree$node.label[[nodeNumber - numTips]]$region
-    splitRegionName <- stringr::str_split(currentNodeRegion, pattern = ",")
-    if (resolveValue %in% splitRegionName) {
-      transmissionTree$node.label[[nodeNumber - numTips]]$region <<- resolveValue
-      childrenNodes <- phangorn::Children(transmissionTree, nodeNumber)
-      childrenForNextStep <- childrenNodes[childrenNodes > numTips]
-      if (length(childrenForNextStep) > 0) {
-        lapply(childrenForNextStep, resolveLowerLevels, resolveValue = resolveValue)
+  numTips <- ape::Ntip(transmissionTree)
+  nodeDepths <- sapply(1:(nrow(transmissionTree$edge) + 1), function(vertexNum) {
+    length(phangorn::Ancestors(transmissionTree, vertexNum, "all"))
+  })
+  # We first perform a bottom-up sweep of the tree.
+  treeVertexNums <- seq(1, nrow(transmissionTree$edge) + 1)[order(nodeDepths, decreasing = TRUE)]
+  for (vertexNum in head(treeVertexNums, -1)) { # We exclude the root node.
+    parentNum <- transmissionTree$edge[match(vertexNum, transmissionTree$edge[ , 2]) , 1]
+    currentRegion <- NA
+    if (vertexNum <= numTips) {
+      currentRegion <- transmissionTree$tip.label[[vertexNum]]$region
+    } else {
+      currentRegion <- transmissionTree$node.label[[vertexNum - numTips]]$region
+    }
+    parentRegion <- transmissionTree$node.label[[parentNum - numTips]]$region
+    if (is.na(parentRegion[[1]])) {
+      transmissionTree$node.label[[parentNum - numTips]]$region <- currentRegion
+    } else {
+      regionIntersection <- intersect(currentRegion, parentRegion)
+      if (length(regionIntersection) > 0) {
+        transmissionTree$node.label[[parentNum - numTips]]$region <- regionIntersection
+      } else {
+        transmissionTree$node.label[[parentNum - numTips]]$region <- c(currentRegion, parentRegion) # The union of regions.
       }
     }
-    NULL
   }
 
-  checkRecursive <- function(nodeNumber) { # nodeNumber will never be for a tip, as tip regions are all known.
-    childrenNodes <- phangorn::Children(transmissionTree, nodeNumber)
-    getChildrenRegions <- function(childIndex) {
-      if (childIndex <= numTips) return(transmissionTree$tip.label[[childIndex]]$region)
-
-      if (is.null(transmissionTree$node.label[[childIndex - numTips]]$region)) return(NA)
-
-      return(transmissionTree$node.label[[childIndex - numTips]]$region)
+  # We now perform a top-down sweep to resolve ambiguities.
+  treeVertexNumsTD <- seq(1, nrow(transmissionTree$edge) + 1)[order(nodeDepths, decreasing = FALSE)]
+  for (vertexNum in treeVertexNumsTD) {
+    if (vertexNum <= numTips) next # Tips are already resolved
+    regionSelected <- currentRegion <- transmissionTree$node.label[[vertexNum - numTips]]$region
+    if (length(currentRegion) > 1) {
+      regionSelected <- sample(currentRegion, size = 1)
+      transmissionTree$node.label[[vertexNum - numTips]]$region <- regionSelected
     }
-    childrenRegions <- sapply(childrenNodes, getChildrenRegions)
-
-    if (any(is.na(childrenRegions))) {
-      unresolvedChildren <- childrenNodes[is.na(childrenRegions)]
-      lapply(unresolvedChildren, checkRecursive)
-      childrenRegions <- sapply(childrenNodes, getChildrenRegions)
+    nodeChildren <- transmissionTree$edge[match(vertexNum, transmissionTree$edge[ , 1]) , 2]
+    nodeChildren <- nodeChildren[nodeChildren > numTips] # Tips are already resolved
+    for (child in nodeChildren) { # Is supposed to work even if nodeChildren is empty
+      childRegion <- transmissionTree$node.label[[child - numTips]]$region
+      if (length(childRegion) > 1) { # Child is unresolved
+        regionIntersect <- intersect(regionSelected, childRegion)
+        if (length(regionIntersect) > 0) {
+          transmissionTree$node.label[[child - numTips]]$region <- regionSelected
+        }
+      }
     }
-
-    splitChildrenRegions <- stringr::str_split(childrenRegions, pattern = ",")
-    regionInCommon <- Reduce(intersect, splitChildrenRegions)
-    if (length(regionInCommon) > 0) {
-      transmissionTree$node.label[[nodeNumber - numTips]]$region <<- stringr::str_c(sort(regionInCommon), collapse = ",")
-
-      resolveLowerLevels(nodeNumber, resolveValue = transmissionTree$node.label[[nodeNumber - numTips]]$region)
-    } else {
-      transmissionTree$node.label[[nodeNumber - numTips]]$region <<- stringr::str_c(sort(unique(do.call("c", splitChildrenRegions))), collapse = ",")
-    }
-    NULL
   }
-  # Function works with side-effects
-  checkRecursive(ape::Ntip(transmissionTree) + 1)
-
-  resolveNodeRegionsRandomly <- function(nodeNumber) {
-    if (nodeNumber <= numTips) return(NULL)
-    nodeRegions <- stringr::str_split(transmissionTree$node.label[[nodeNumber - numTips]]$region, pattern = ",")[[1]]
-    nodeChildren <- phangorn::Children(transmissionTree, nodeNumber)
-    if (length(nodeRegions) > 1) {
-      selectedRegion <- sample(x = nodeRegions, size = 1)
-      transmissionTree$node.label[[nodeNumber - numTips]]$region <<- selectedRegion
-      lapply(nodeChildren[nodeChildren > numTips], FUN = resolveLowerLevels, resolveValue = selectedRegion)
-    }
-    childrenToConsider <- nodeChildren[nodeChildren > numTips]
-    lapply(childrenToConsider, FUN = resolveNodeRegionsRandomly)
-    NULL
-  }
-  transmissionTree$node.label <- lapply(transmissionTree$node.label, function(nodeLabel) {
-    nodeLabel$originalRegion <- nodeLabel$region
-    nodeLabel
-  }) # I copy the information before resolving the tree randomly, just in case.
-
-  # Also works with side-effects
-  resolveNodeRegionsRandomly(numTips + 1)
-
   transmissionTree
 }
 
