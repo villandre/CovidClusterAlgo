@@ -67,7 +67,7 @@ findBayesianClusters <- function(
     # control$MCMC.control$chainId <- stringi::stri_rand_strings(1, 6)
     chainId <- stringi::stri_rand_strings(1, 6)
     if (is.null(startingValuePhylo)) {
-      MLphyloAndEvoPars <- .genMLphyloAndEvoPars(DNAbinData, rootSequenceName)
+      MLphyloAndEvoPars <- .genMLphyloAndEvoPars(DNAbinData, rootSequenceName, resolvePolytomies = control$resolvePolytomies)
       startingValuePhylo <- MLphyloAndEvoPars$phylogeny
       if (is.null(evoParsList)) evoParsList <- MLphyloAndEvoPars$evoParsList
     }
@@ -83,9 +83,9 @@ findBayesianClusters <- function(
     startingValues$Lambda <- .genStartCoalescenceRates(startingValues$phyloAndTransTree, estRootTime = estRootTime, control = control)
     if (!control$fixedClockRate) {
       startXi <- rep(perSiteClockRate, length(startingValues$phyloAndTransTree$edge.length))
-      if (!control$strictClockModel) {
-        startXi <- .genStartXi(startingValues$phyloAndTransTree, numSites = ncol(DNAbinData))
-      }
+      # if (!control$strictClockModel) {
+      #   startXi <- .genStartXi(startingValues$phyloAndTransTree, numSites = ncol(DNAbinData))
+      # }
       startingValues$phyloAndTransTree$edge.length <- lapply(seq_along(startingValues$phyloAndTransTree$edge.length), function(branchIndex) {
         updatedBranch <- startingValues$phyloAndTransTree$edge.length[[branchIndex]]
         updatedBranch$xi <- startXi[[branchIndex]]
@@ -166,8 +166,9 @@ findBayesianClusters.control <- function(
   controlForGenStartTransmissionTree = .controlForGenStartTransmissionTree(),
   fixedClockRate = TRUE,
   strictClockModel = TRUE,
-  saveData = TRUE) {
-  list(logLikFun = logLikFun, numMigrationsPoissonPriorMean = numMigrationsPoissonPriorMean, MCMC.control = do.call("MCMC.control", MCMC.control), controlForGenStartTransmissionTree = do.call(".controlForGenStartTransmissionTree", controlForGenStartTransmissionTree), transTreeCondOnPhylo = transTreeCondOnPhylo, fixedClockRate = fixedClockRate, strictClockModel = strictClockModel, saveData = saveData)
+  saveData = TRUE,
+  resolvePolytomies = FALSE) {
+  list(logLikFun = logLikFun, numMigrationsPoissonPriorMean = numMigrationsPoissonPriorMean, MCMC.control = do.call("MCMC.control", MCMC.control), controlForGenStartTransmissionTree = do.call(".controlForGenStartTransmissionTree", controlForGenStartTransmissionTree), transTreeCondOnPhylo = transTreeCondOnPhylo, fixedClockRate = fixedClockRate, strictClockModel = strictClockModel, saveData = saveData, resolvePolytomies = resolvePolytomies)
 }
 
 .genStartXi <- function(phyloAndTransTree, numSites) {
@@ -193,12 +194,15 @@ presetPML <- function(phyloObj, phyDatObj, evoParsList) {
                 model = "GTR")$logLik
 }
 
-.genMLphyloAndEvoPars <- function(DNAbinData, rootSequenceName) {
+.genMLphyloAndEvoPars <- function(DNAbinData, rootSequenceName, resolvePolytomies = FALSE) {
   distMatrix <- ape::dist.dna(x = DNAbinData, model = "raw", pairwise.deletion = TRUE)
   startingPhylo <- ape::bionj(distMatrix)
   startPML <- phangorn::pml(tree = startingPhylo, data = phangorn::as.phyDat(DNAbinData), k = 4, model = "GTR")
   optimisedPhylo <- phangorn::optim.pml(object = startPML, optNni = TRUE, optBf = TRUE, optQ = TRUE, optInv = TRUE, optGamma = TRUE, optEdge = TRUE, optRate = TRUE)
   optimisedPhylo$tree <- ape::root(optimisedPhylo$tree, outgroup = rootSequenceName, resolve.root = TRUE)
+  if (resolvePolytomies) {
+    optimisedPhylo$tree <- ape::multi2di(optimisedPhylo$tree)
+  }
   list(phylogeny = optimisedPhylo$tree, evoParsList = list(Q = optimisedPhylo$Q, bf = optimisedPhylo$bf, gammaShape = optimisedPhylo$shape, propInv = optimisedPhylo$inv, ncat = optimisedPhylo$k))
 }
 
