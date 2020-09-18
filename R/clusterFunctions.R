@@ -354,7 +354,7 @@ phylo <- function(edge, edge.length, tip.label, node.label = NULL) {
     logPriorAndTransFunList$l$logPriorFun <- function(x) .transTreeBranchLengthsConditionalLogPrior(phyloAndTransTree = x, numSites = ncol(DNAbinData), gammaShapePar = MCMCcontrol$transTreeBranchLengthsGammaShapePar)
 
   logPriorAndTransFunList$xi <- list(
-    logPriorFun = function(x) .clockRatesLogPrior(phyloAndTransTree = x, meanValue = perSiteClockRate, stdDev = perSiteClockRate),
+    logPriorFun = function(x) .clockRatesLogPrior(phyloAndTransTree = x, meanValue = perSiteClockRate, stdDev = perSiteClockRate, strict = control$strictClockModel),
     transFun = function(x) {
       .clockRatesTransFun(phyloAndTransTree = x, propToModify = MCMCcontrol$propClockRatesToModify, logKernelSD = MCMCcontrol$clockRatesLogKernelSD, strict = control$strictClockModel)
     })
@@ -452,6 +452,8 @@ phylo <- function(edge, edge.length, tip.label, node.label = NULL) {
     }
     cat("Processed MCMC iteration ", sweepNum * MCMCcontrol$nIterPerSweep, ".\n", sep = "")
     cat("Current log-PP:", currentState[[1]]$logPP, "\n\n")
+    cat("Current log-priors: \n")
+    print(currentState[[1]]$logPrior)
     # if ((MCMCiter %% MCMCcontrol$stepSize) == 0) {
     MCMCcontainer[[sweepNum]] <<- currentState
     if (!is.null(MCMCcontrol$folderToSaveIntermediateResults)) {
@@ -1115,8 +1117,11 @@ prune.tree <- function(phylogeny, node) {
 }
 
 # We pick a log-normal prior on the original scale because we would like the prior on the log-scale to be normal.
-.clockRatesLogPrior <- function(phyloAndTransTree, meanValue, stdDev) {
-  x <- sapply(phyloAndTransTree$edge.length, "[[", "xi")
+.clockRatesLogPrior <- function(phyloAndTransTree, meanValue, stdDev, strict = FALSE) {
+  x <- phyloAndTransTree$edge.length[[1]]$xi
+  if (!strict) {
+    x <- sapply(phyloAndTransTree$edge.length, "[[", "xi")
+  }
   mu <- log(meanValue^2/sqrt(stdDev^2 + meanValue^2))
   sigmaSq <- log(stdDev^2/meanValue^2 + 1)
   sum(dlnorm(x = x, meanlog = mu, sdlog = sqrt(sigmaSq), log = TRUE))
