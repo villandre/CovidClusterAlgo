@@ -1234,6 +1234,29 @@ getDistanceBasedClusters <- function(phyloAndTransTree, distLimit, regionLabel, 
     stop("Clustering criterion must be either 'cophenetic', 'mrca', or 'consecutive'.")
   }
   transmissionTree <- .convertToTransTree(phyloAndTransTree)
+  if (identical(criterion, "consecutive")) {
+    updateTransmissionTree <- function(phylogeny) { # Seems inefficient, but it shouldn't take too much time, even in large samples...
+      transmissionTree <- ape::multi2di(phylogeny)
+      nodesToFix <- which(sapply(transmissionTree$node.label, identical, "")) + ape::Ntip(transmissionTree)
+      while (length(nodesToFix) > 0) {
+        currentNode <- phangorn::Ancestors(transmissionTree, nodesToFix[[1]], "parent")
+        parentSequence <- nodesToFix[[1]]
+        while (identical(.getVertexLabel(phylogeny = transmissionTree, vertexNum = currentNode), "")) {
+          parentSequence <- c(parentSequence, currentNode)
+          currentNode <- phangorn::Ancestors(transmissionTree, currentNode, "parent")
+        }
+        vertexToCopy <- .getVertexLabel(transmissionTree, currentNode)
+
+        for (nodeIndex in parentSequence) { # parentSequence cannot include a tip
+          transmissionTree$node.label[[nodeIndex - ape::Ntip(transmissionTree)]] <- vertexToCopy
+        }
+        nodesToFix <- setdiff(nodesToFix, parentSequence)
+      }
+      transmissionTree
+    }
+    transmissionTree <- updateTransmissionTree(transmissionTree)
+  }
+
   clusterList <- list()
   nodesToCheck <- ape::Ntip(transmissionTree) + 1
   repeat {
@@ -1273,7 +1296,7 @@ getDistanceBasedClusters <- function(phyloAndTransTree, distLimit, regionLabel, 
           if (length(nodesToConsiderTest) > 0) {
             distances <- transmissionTree$edge.length[match(nodeDescendants[nodesToConsiderTest], transmissionTree$edge[ , 2])]
           } else {
-            distances <- Inf # We've reached a node whose children are all tips. The "consecutive" criterion excludes that these structures could be clusters.
+            distances <- Inf # We've reached a transmission pair. The "consecutive" criterion excludes that these structures could be clusters.
           }
         }
         if (all(distances < distLimit)) {
@@ -1283,7 +1306,8 @@ getDistanceBasedClusters <- function(phyloAndTransTree, distLimit, regionLabel, 
       }
     }
     if (incrementNodesToCheckFlag) {
-      nodesToCheck <- c(nodesToCheck, phangorn::Children(transmissionTree, node = nodeNumber))
+      verticesToAdd <- phangorn::Children(transmissionTree, node = nodeNumber)
+      nodesToCheck <- c(nodesToCheck, verticesToAdd)
     }
 
     nodesToCheck <- nodesToCheck[-1]
