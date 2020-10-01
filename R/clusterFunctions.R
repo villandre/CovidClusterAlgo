@@ -43,7 +43,7 @@ findBayesianClusters <- function(
   epidemicRootTimePOSIXct = NULL,
   seqsRegionStamps = rep(1, ifelse(is.matrix(DNAbinData), nrow(DNAbinData), length(DNAbinData))),
   perSiteClockRate,
-  startingValuePhylo = NULL,
+  startingValuesFromChainIter = NULL,
   evoParsList = NULL,
   clusterScoringFun = NULL,
   control = list()) {
@@ -66,10 +66,12 @@ findBayesianClusters <- function(
     control <- do.call('findBayesianClusters.control', control)
     # control$MCMC.control$chainId <- stringi::stri_rand_strings(1, 6)
     chainId <- stringi::stri_rand_strings(1, 6)
-    if (is.null(startingValuePhylo)) {
+    if (is.null(startingValuesFromChainIter)) {
       MLphyloAndEvoPars <- .genMLphyloAndEvoPars(DNAbinData, rootSequenceName, resolvePolytomies = control$resolvePolytomies)
       startingValuePhylo <- MLphyloAndEvoPars$phylogeny
       if (is.null(evoParsList)) evoParsList <- MLphyloAndEvoPars$evoParsList
+    } else {
+      evoParsList <- startingValuesFromChainIter$evoParsList
     }
     if (!is.null(control$MCMC.control$folderToSaveIntermediateResults)) {
       filename <- paste(control$MCMC.control$folderToSaveIntermediateResults, "/chain_", chainId, "_controlParameters.Rdata", sep = "")
@@ -77,15 +79,16 @@ findBayesianClusters <- function(
       evoParsFilename <- paste(control$MCMC.control$folderToSaveIntermediateResults, "/chain_", chainId, "_evoParameters.Rdata", sep = "")
       save(evoParsList, file = evoParsFilename)
     }
+    if (is.null(startingValuesFromChainIter)) {
+      startingValues$phyloAndTransTree <- .genStartphyloAndTransTree(phylogeny = startingValuePhylo, seqsTimestampsPOSIXct = seqsTimestampsPOSIXct, seqsRegionStamps = seqsRegionStamps, perSiteClockRate = perSiteClockRate, control = control$controlForGenStartTransmissionTree)
 
-    startingValues$phyloAndTransTree <- .genStartphyloAndTransTree(phylogeny = startingValuePhylo, seqsTimestampsPOSIXct = seqsTimestampsPOSIXct, seqsRegionStamps = seqsRegionStamps, perSiteClockRate = perSiteClockRate, control = control$controlForGenStartTransmissionTree)
-
-    startingValues$Lambda <- .genStartCoalescenceRates(startingValues$phyloAndTransTree, estRootTime = estRootTime, control = control)
-    if (!control$fixedClockRate) {
+      startingValues$Lambda <- .genStartCoalescenceRates(startingValues$phyloAndTransTree, estRootTime = estRootTime, control = control)
+    } else {
+      startingValues$phyloAndTransTree <- startingValuesFromChainIter$paraValues$phyloAndTransTree
+      startingValues$Lambda <- startingValuesFromChainIter$paraValues$Lambda
+    }
+    if (!control$fixedClockRate & is.null(startingValuesFromChainIter)) {
       startXi <- rep(perSiteClockRate, length(startingValues$phyloAndTransTree$edge.length))
-      # if (!control$strictClockModel) {
-      #   startXi <- .genStartXi(startingValues$phyloAndTransTree, numSites = ncol(DNAbinData))
-      # }
       startingValues$phyloAndTransTree$edge.length <- lapply(seq_along(startingValues$phyloAndTransTree$edge.length), function(branchIndex) {
         updatedBranch <- startingValues$phyloAndTransTree$edge.length[[branchIndex]]
         updatedBranch$xi <- startXi[[branchIndex]]
@@ -374,6 +377,8 @@ phylo <- function(edge, edge.length, tip.label, node.label = NULL) {
   print(currentState[[1]]$logPrior) # "1" is the cold chain
   cat("Starting value for log-lik.: \n")
   print(currentState[[1]]$logLik) # "1" is the cold chain
+  cat("Starting value for log-PP: \n")
+  print(currentState[[1]]$logLik + sum(currentState[[1]]$logPrior))
   if (MCMCcontrol$nChains > 1) {
     clusterAddress <- parallel::makeForkCluster(nnodes = MCMCcontrol$nChains)
   }
@@ -426,6 +431,7 @@ phylo <- function(edge, edge.length, tip.label, node.label = NULL) {
             chainState$logLik <- updatedLogLik
             chainState$logPrior <- updatedLogPrior
             chainState$logPP <- proposalLogPP
+            chainState$evoParsList <- evoParsList # Needlessly repeated, but does not take too much memory, and allows the chains to be easily resumed from any iteration.
           }
         }
         # cat("End iter. Current log-PP:", chainState$logPP, "\n", sep = " ")
@@ -909,6 +915,9 @@ MCMC.control <- function(n = 2e5, nIterPerSweep = 100, nChains = 1, temperatureP
 }
 
 plotTransmissionTree <- function(dualPhyloAndTransmissionTree, timestamps, plotTipLabels = FALSE, plotTitle = NULL, showLabelTime = FALSE, showLabelRegion = FALSE, device = jpeg, filename, argsForDevice = list(), argsForPlotPhylo = NULL, showLegend = TRUE) {
+  if (!requireNamespace("ggtree")) {
+    stop("Library ggtree is required to plot the transmission tree, but has not been found on this system. Please install it and try again. \n")
+  }
   transmissionTree <- .convertToTransTree(dualPhyloAndTransmissionTree)
 
   transmissionTree$node.label <- sapply(transmissionTree$node.label, function(x) x$time)
