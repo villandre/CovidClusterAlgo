@@ -355,23 +355,20 @@ phylo <- function(edge, edge.length, tip.label, node.label = NULL) {
         },
       transFun = .topologyTransFun),
     b = list( # The mean here corresponds to 7 days for the time between the time the sequence is sampled and the time at which the first transmission linking it to another sequence in the sample occurred.
-      logPriorFun =  function(x) .phyloBranchLengthsLogPriorFun(phyloAndTransTree = x, extBranchLengthPriorMean = perSiteClockRate * 7, extBranchLengthPriorSD = perSiteClockRate * 100),
+      logPriorFun =  function(x) .phyloBranchLengthsLogPriorFun(phyloAndTransTree = x, extBranchLengthPriorMean = perSiteClockRate * 14, extBranchLengthPriorSD = perSiteClockRate * 50),
       transFun = function(x) .phyloBranchLengthsTransFun(x, logTransKernSD = MCMCcontrol$phyloBranchLengthsLogTransKernSD, propToModify = MCMCcontrol$propPhyloBranchesToModify)),
-    l = list(
-      logPriorFun = function(x) .transTreeBranchLengthsConditionalLogPrior(phyloAndTransTree = x, MVratio = MCMCcontrol$transTreeBranchLengthsPriorMVratio),
-      transFun = function(x) .transTreeBranchLengthsTransFun(phyloAndTransTree = x, tuningPara = MCMCcontrol$transTreeTuningPara, propToModify = MCMCcontrol$propTransTreeBranchesToModify, rootTransitionPar = MCMCcontrol$rootTransitionPar)),
-    Lambda = list(
-      logPriorFun = .coalescenceRatesLogPriorFun,
-      transFun = function(x) .coalescenceRatesTransFun(x, sd = MCMCcontrol$coalRateKernelSD)))
-  if (!control$fixedClockRate) {
-    logPriorAndTransFunList$l$logPriorFun <- function(x) .transTreeBranchLengthsConditionalLogPrior(phyloAndTransTree = x, MVratio = MCMCcontrol$transTreeBranchLengthsPriorMVratio)
+   Lambda = list(
+     logPriorFun = .coalescenceRatesLogPriorFun,
+     transFun = function(x) .coalescenceRatesTransFun(x, sd = MCMCcontrol$coalRateKernelSD)))
+  nodeNumbers <- (ape::Ntip(startingValues$phyloAndTransTree) + 1):(length(startingValues$phyloAndTransTree$edge.length) + 1)
+  nodeTimesLogPriorAndTransFunList <- sapply(nodeNumbers, function(nodeNumber) {
+    list(
+      logPriorFun = function(x) .nodeTimesConditionalLogPrior(phyloAndTransTree = x, meanLogClockRate = log(perSiteClockRate), control = control),
+      transFun = function(x) .nodeTimeTransFun(phyloAndTransTree = x, tuningPara = MCMCcontrol$transTreeTuningPara, propToModify = MCMCcontrol$propTransTreeBranchesToModify, rootTransitionPar = MCMCcontrol$rootTransitionPar, nodeNumber = nodeNumber))
+  })
+  timeNames <- paste("t", nodeNumbers)
+  names(nodeTimesLogPriorAndTransFunList) <- timeNames
 
-  logPriorAndTransFunList$logXi <- list(
-    logPriorFun = function(x) .logClockRatesLogPrior(phyloAndTransTree = x, logClockRatePriorMean = log(perSiteClockRate), stdDev = control$MCMC.control$logClockRatesPriorSD, strict = control$strictClockModel),
-    transFun = function(x) {
-      .logClockRatesTransFun(phyloAndTransTree = x, propToModify = MCMCcontrol$propClockRatesToModify, logKernelSD = MCMCcontrol$logClockRatesKernelSD, strict = control$strictClockModel)
-    })
-  }
   if (length(filesToRestore) == 0) { # New chains...
     logPriorValue <- sapply(names(logPriorAndTransFunList), FUN = function(paraName) logPriorAndTransFunList[[paraName]]$logPriorFun(.getCurrentState(currentStateVector = currentState[[1]], paraName = paraName)))
     names(logPriorValue) <- names(logPriorAndTransFunList)
@@ -417,8 +414,11 @@ phylo <- function(edge, edge.length, tip.label, node.label = NULL) {
           # That's where we take care of other conditional priors depending on the parameter whose transition is being processed.
           if (paraName %in% c("topology", "b")) {
             updatedLogLik <- logLikFun(.convertToPhylo(updatedDualTree), phyDatData, evoParsList)
-            if (paraName == "b") { # Prior for "l" is conditioned on "b"
-              updatedLogPrior[["l"]] <- logPriorAndTransFunList[["l"]]$logPriorFun(updatedDualTree)
+            if (paraName == "b") {
+              ### TO_DO
+              updatedLogPrior[timeNames] <- lapply(timeNames, function(timeName) {
+                logPriorAndTransFunList[[timeName]]$logPriorFun(updatedDualTree)
+              })
             }
           } else if (paraName == "l") {
             updatedLogPrior[["topology"]] <- logPriorAndTransFunList[["topology"]]$logPriorFun(updatedDualTree)
@@ -434,10 +434,12 @@ phylo <- function(edge, edge.length, tip.label, node.label = NULL) {
           # cat("transKernRatio:", proposalValueAndTransKernRatio$transKernRatio, "exponent:", exponentValue, "proposal LogPP:", proposalLogPP, "current LogPP:", chainState$logPP, "\n", sep = " ")
           if (runif(1) <= MHratio) {
             if (paraName %in% c("topology", "l", "b", "logXi")) {
-              # cat("Transition accepted. Parameter name:", paraName, "\n New log-PP", proposalLogPP, "\n")
-              # cat("Log-priors:\n")
-              # print(updatedLogPrior)
-              # browser()
+              if (MHratio > exp(10)) {
+                cat("Transition accepted. Parameter name:", paraName, "\n New log-PP", proposalLogPP, "\n")
+                cat("Log-priors:\n")
+                print(updatedLogPrior)
+                browser()
+              }
               chainState$paraValues$phyloAndTransTree <- updatedDualTree
             } else {
               chainState$paraValues[[paraName]] <- proposalValueAndTransKernRatio$value
@@ -856,22 +858,21 @@ MCMC.control <- function(n = 2e5, nIterPerSweep = 100, nChains = 1, temperatureP
   sum(sapply(seq_along(phyloAndTransTree$edge.length), FUN = transTreeSingleBranchLengthLogPrior))
 }
 
-.transTreeBranchLengthsConditionalLogPrior <- function(phyloAndTransTree, MVratio = 1) {
-  perSiteClockRate <- exp(sapply(phyloAndTransTree$edge.length, "[[", "logXi"))
-  phyloBranchLengths <- sapply(phyloAndTransTree$edge.length, "[[", "phylogeny")
-  # phyloBranchLengths <- replace(phyloBranchLengths, which(phyloBranchLengths == 0), 1/(2 * numSites)) # Branches of length 0 have already been fixed.
-  transTreeBranchLengths <- sapply(phyloAndTransTree$edge.length, "[[", "transmissionTree")
-  meanValue <- phyloBranchLengths/perSiteClockRate
-  varValue <- meanValue/MVratio
-  muPar <- log(meanValue^2/sqrt(varValue + meanValue^2))
-  sigmaPar <- sqrt(log(varValue/meanValue^2 + 1))
-  sum(dlnorm(x = transTreeBranchLengths, meanlog = muPar, sdlog = sigmaPar, log = TRUE))
-  # sum(dnorm(x = log(transTreeBranchLengths), mean = meanValue, sd = log(5), log = TRUE))
-}
+# .transTreeBranchLengthsConditionalLogPrior <- function(phyloAndTransTree, MVratio = 1) {
+#   perSiteClockRate <- exp(sapply(phyloAndTransTree$edge.length, "[[", "logXi"))
+#   phyloBranchLengths <- sapply(phyloAndTransTree$edge.length, "[[", "phylogeny")
+#   # phyloBranchLengths <- replace(phyloBranchLengths, which(phyloBranchLengths == 0), 1/(2 * numSites)) # Branches of length 0 have already been fixed.
+#   transTreeBranchLengths <- sapply(phyloAndTransTree$edge.length, "[[", "transmissionTree")
+#   meanValue <- phyloBranchLengths/perSiteClockRate
+#   varValue <- meanValue/MVratio
+#   muPar <- log(meanValue^2/sqrt(varValue + meanValue^2))
+#   sigmaPar <- sqrt(log(varValue/meanValue^2 + 1))
+#   sum(dlnorm(x = transTreeBranchLengths, meanlog = muPar, sdlog = sigmaPar, log = TRUE))
+#   # sum(dnorm(x = log(transTreeBranchLengths), mean = meanValue, sd = log(5), log = TRUE))
+# }
 
-.transTreeBranchLengthsTransFun <- function(phyloAndTransTree, tuningPara = 0.1, propToModify = 0.1, rootTransitionPar = 15) {
+.nodeTimeTransFun <- function(phyloAndTransTree, nodeNumber, tuningPara = 0.5, rootTransitionPar = 15) {
   numTips <- length(phyloAndTransTree$tip.label)
-  numNodes <- length(phyloAndTransTree$node.label)
   updateNodeTime <- function(nodeIndex) {
     currentTime <- phyloAndTransTree$node.label[[nodeIndex - numTips]]$time
     childrenIndices <- phangorn::Children(phyloAndTransTree, nodeIndex)
@@ -886,22 +887,14 @@ MCMC.control <- function(n = 2e5, nIterPerSweep = 100, nChains = 1, temperatureP
     updatedTime <- runif(1, lowerBound, upperBound)
     updatedTime
   }
-  numNodesToModify <- 1
-  if (propToModify > 0) {
-    numNodesToModify <- ceiling(propToModify * numNodes)
-  }
-  nodesToUpdate <- sample(seq_along(phyloAndTransTree$node.label) + numTips, size = numNodesToModify, replace = FALSE)
-  updatedNodeTimes <- sapply(nodesToUpdate, updateNodeTime)
+  updatedNodeTime <- updateNodeTime(nodeNumber)
 
-  phyloAndTransTree$node.label[nodesToUpdate - numTips] <- lapply(seq_along(nodesToUpdate), function(alongNodeIndex) {
-    updatedNode <- phyloAndTransTree$node.label[[nodesToUpdate[alongNodeIndex] - numTips]]
-    updatedNode$time <- updatedNodeTimes[[alongNodeIndex]]
-    updatedNode
-  })
+  phyloAndTransTree$node.label[[nodeNumber - numTips]]$time <- updatedNodeTime
   updatedTransTreeEdges <- .deriveTransTreeEdgeLengths(phyloAndTransTree)
   phyloAndTransTree$edge.length <- lapply(seq_along(phyloAndTransTree$edge.length), function(edgeIndex) {
     updatedEdgeLength <- phyloAndTransTree$edge.length[[edgeIndex]]
     updatedEdgeLength$transmissionTree <- updatedTransTreeEdges[[edgeIndex]]
+    updatedEdgeLength$logXi <- log(updatedEdgeLength$phylogeny) - log(updatedEdgeLength$transmissionTree)
     updatedEdgeLength
   })
 
@@ -1476,8 +1469,11 @@ dist.tips.root.phylo <- function(phylogeny, tips) {
   phyloAndTransTree <- .initialiseTree(phyloAndTransTree, timestampsInDays, regionStamps, startLogClockRate = logClockRatePriorMean, estRootTime, control)
 
   # Improves transmission tree branch lengths conditional on phylogenetic branch lengths and an equal clock rate across branches
-  currentScore <- (.transTreeBranchLengthsConditionalLogPrior(phyloAndTransTree, MVratio = MCMCcontrol$transTreeBranchLengthsPriorMVratio) + .rootTimeLogPriorFun(phyloAndTransTree$node.label[[1]]$time, meanValue = estRootTime) + .logClockRatesLogPrior(phyloAndTransTree, logClockRatePriorMean = logClockRatePriorMean, stdDev = control$MCMC.control$logClockRatesPriorSD, strict = control$strictClockModel))
+  currentScore <- .nodeTimesConditionalLogPrior(phyloAndTransTree, logClockRatePriorMean, control) + .rootTimeLogPriorFun(phyloAndTransTree$node.label[[1]]$time, meanValue = estRootTime)
+  cat("Score before optimisation:", currentScore, "\n")
   phyloAndTransTree <- .refineTimeEstimates(phyloAndTransTree = phyloAndTransTree, estRootTime = estRootTime, logClockRatePriorMean = logClockRatePriorMean, control = control)
+  currentScore <- .nodeTimesConditionalLogPrior(phyloAndTransTree, logClockRatePriorMean, control) + .rootTimeLogPriorFun(phyloAndTransTree$node.label[[1]]$time, meanValue = estRootTime)
+  cat("Score after optimisation:", currentScore, "\n")
   phyloAndTransTree
 }
 
@@ -1502,12 +1498,9 @@ dist.tips.root.phylo <- function(phylogeny, tips) {
     childrenTimes <- sapply(childrenNums, function(childNum) .getVertexLabel(phyloAndTransTree, childNum)$time)
     maximumTime <- min(childrenTimes)
     funToOptimise <- function(rootTime) {
-      -sum(dlnorm(x = childrenTimes - rootTime, meanlog = muPar, sdlog = sigmaPar, log = TRUE))
+      -sum(.logXiPriorFun(childrenTimes - rootTime, meanValue = log(startLogClockRate), stdDev = control$logClockRatePriorSD))
     }
-    gradFct <- function(rootTime) {
-      -sum(1/(childrenTimes - rootTime) * (1 + 1/sigmaPar^2 * (log(childrenTimes - rootTime) - muPar)))
-    }
-    optRootTime <- nloptr::lbfgs(x0 = maximumTime - 1, fn = funToOptimise, gr = gradFct, upper = maximumTime, control = list(xtol_rel = 1e-4))
+    optRootTime <- nloptr::lbfgs(x0 = maximumTime - 1, fn = funToOptimise, upper = maximumTime, control = list(xtol_rel = 1e-4))
     # optRootTime <- nloptr::lbfgs(x0 = maximumTime - 1, fn = funToOptimise, upper = maximumTime)
     phyloAndTransTree$node.label[[nodeNumber - ape::Ntip(phyloAndTransTree)]]$time <- optRootTime$par + rnorm(1, sd = 1e-15) # A bit of jittering to ensure that we don't get equal branching times...
 
@@ -1546,18 +1539,19 @@ dist.tips.root.phylo <- function(phylogeny, tips) {
     if (nodeLabel > ape::Ntip(phyloAndTransTree) + 1) {
       parentNum <- phangorn::Ancestors(phyloAndTransTree, nodeLabel, "parent")
       supportEdgeNum <- match(nodeLabel, phyloAndTransTree$edge[ , 2])
-      supportBranchLength <- phyloAndTransTree$edge.length[[supportEdgeNum]]$phylogeny
+      supportBranchLogXi <- phyloAndTransTree$edge.length[[supportEdgeNum]]$logXi
     }
 
     childrenNums <- phangorn::Children(phyloAndTransTree, nodeLabel)
-    childrenBranchLengths <- sapply(childrenNums, function(vertexNum) {
+    childrenBranchesLogXis <- sapply(childrenNums, function(vertexNum) {
       matchValue <- match(vertexNum,  phyloAndTransTree$edge[ , 2])
-      phyloAndTransTree$edge.length[[matchValue]]$phylogeny
+      phyloAndTransTree$edge.length[[matchValue]]$logXi
     })
     childrenEdgeNums <- match(childrenNums, phyloAndTransTree$edge[ , 2])
-    list(parent = parentNum, supportEdgeNum = supportEdgeNum, children = childrenNums, supportBranchLength = supportBranchLength, childrenBranchLengths = childrenBranchLengths, childrenEdgeNums = childrenEdgeNums)
+    list(parent = parentNum, supportEdgeNum = supportEdgeNum, children = childrenNums, supportBranchLogXi = supportBranchLogXi, childrenBranchesLogXis = childrenBranchesLogXis, childrenEdgeNums = childrenEdgeNums)
   })
-
+  envForPhyloAndTransTree <- new.env()
+  assign("phyloAndTransTree", value = phyloAndTransTree, envir = envForPhyloAndTransTree)
   for (nodeIndex in seq_along(phyloAndTransTree$node.label)) {
     nodeInfoList <- nodeChildrenParentParsList[[nodeIndex]]
     childrenNodes <- nodeInfoList$children
@@ -1566,48 +1560,33 @@ dist.tips.root.phylo <- function(phylogeny, tips) {
     if (nodeIndex != 1) {
       parentTime <- .getVertexLabel(phylogeny = phyloAndTransTree, vertexNum = nodeInfoList$parent)$time
     }
-    objectiveFunForOptim <- function(timePointAndLogXiValues, phyloAndTransTree) {
-      timePoint <- timePointAndLogXiValues[[1]]
+    objectiveFunForOptim <- function(timePoint, envForPhyloAndTransTree) {
+      phyloAndTransTree <- envForPhyloAndTransTree$phyloAndTransTree
       phyloAndTransTree$node.label[[nodeIndex]]$time <- timePoint
-      logXiValues <- tail(timePointAndLogXiValues, n = -1)
-      childrenLogXiValues <- head(logXiValues, n = length(childrenTimes))
-      for (index in seq_along(childrenLogXiValues)) {
-        childEdgeNum <- nodeInfoList$childrenEdgeNums[[index]]
-        phyloAndTransTree$edge.length[[childEdgeNum]]$logXi <- childrenLogXiValues[[index]]
+      for (childNodeIndex in seq_along(nodeInfoList$childrenEdgeNums)) {
+        numerator <- phyloAndTransTree$edge.length[[nodeInfoList$childrenEdgeNums[[childNodeIndex]]]]$phylogeny
+        denominator <- .getVertexLabel(phyloAndTransTree, nodeInfoList$children[[childNodeIndex]])$time - timePoint
+        newLogXi <- log(numerator) - log(denominator)
+        phyloAndTransTree$edge.length[[nodeInfoList$childrenEdgeNums[[childNodeIndex]]]]$transmissionTree <- denominator
+        phyloAndTransTree$edge.length[[nodeInfoList$childrenEdgeNums[[childNodeIndex]]]]$logXi <- newLogXi
       }
 
       if (nodeIndex > 1) {
-        supportLogXi <- tail(logXiValues, n = 1)
-        supportEdgeNum <- nodeInfoList$supportEdgeNum
-        phyloAndTransTree$edge.length[[supportEdgeNum]]$logXi <- supportLogXi
+        numerator <- phyloAndTransTree$edge.length[[nodeInfoList$supportEdgeNum]]$phylogeny
+        denominator <- timePoint - .getVertexLabel(phyloAndTransTree, nodeInfoList$parent)$time
+        newLogXi <- log(numerator) - log(denominator)
+        phyloAndTransTree$edge.length[[nodeInfoList$supportEdgeNum]]$logXi <- newLogXi
+        phyloAndTransTree$edge.length[[nodeInfoList$supportEdgeNum]]$transmissionTree <- denominator
       }
-      objective <- -1 * (.transTreeBranchLengthsConditionalLogPrior(phyloAndTransTree = phyloAndTransTree, MVratio = MVratio) + .logClockRatesLogPrior(phyloAndTransTree = phyloAndTransTree, logClockRatePriorMean = logClockRatePriorMean, stdDev = control$MCMC.control$logClockRatesPriorSD, strict = control$strictClockModel) + .rootTimeLogPriorFun(phyloAndTransTree$node.label[[1]]$time, meanValue = estRootTime))
+      envForPhyloAndTransTree$phyloAndTransTree <- phyloAndTransTree
+      objective <- -1 * (.nodeTimesConditionalLogPrior(phyloAndTransTree, logClockRatePriorMean, control = control) + .rootTimeLogPriorFun(phyloAndTransTree$node.label[[1]]$time, meanValue = estRootTime))
       objective
     }
     currentTime <- .getVertexLabel(phyloAndTransTree, nodeIndex + ape::Ntip(phyloAndTransTree))$time
-    currentLogXis <- sapply(nodeInfoList$children, function(childNum) {
-      branchNum <- match(childNum, phyloAndTransTree$edge[ , 2])
-      phyloAndTransTree$edge.length[[branchNum]]$logXi
-    })
-    if (nodeIndex > 1) {
-      parentNum <- nodeInfoList$parent
-      parentBranchNum <- match(parentNum, phyloAndTransTree$edge[ , 2])
-      currentLogXis <- c(currentLogXis, phyloAndTransTree$edge.length[[parentBranchNum]]$logXi)
-    }
-    startVec <- c(currentTime, currentLogXis)
-
-    optTimepointAndLogXi <- nloptr::lbfgs(x0 = startVec, fn = objectiveFunForOptim, lower = c(parentTime, rep(-23, length(currentLogXis))), upper = c(min(childrenTimes), rep(0, length(currentLogXis))), phyloAndTransTree = phyloAndTransTree, control = list(xtol_rel = 1e-4))
-
-    phyloAndTransTree$node.label[[nodeIndex]]$time <- optTimepointAndLogXi$par[[1]]
-    for (index in seq_along(nodeInfoList$children)) {
-      phyloAndTransTree$edge.length[[nodeInfoList$childrenEdgeNums[[index]]]]$logXi <- optTimepointAndLogXi$par[[index + 1]] # First element of par is a time point, hence the + 1.
-    }
-    if (nodeIndex > 1) {
-      phyloAndTransTree$edge.length[[nodeInfoList$supportEdgeNum]]$logXi <- tail(optTimepointAndLogXi$par, n = 1)
-    }
+    nloptr::lbfgs(x0 = currentTime, fn = objectiveFunForOptim, lower = parentTime, upper = min(childrenTimes), envForPhyloAndTransTree = envForPhyloAndTransTree, control = list(xtol_rel = 1e-4))
   }
   cat("Done!")
-  phyloAndTransTree
+  envForPhyloAndTransTree$phyloAndTransTree
 }
 
 getLogNormMMpars <- function(meanValue, varValue) {
@@ -1615,19 +1594,19 @@ getLogNormMMpars <- function(meanValue, varValue) {
   list(mu = log(meanValueSq/sqrt(varValue + meanValueSq)), sigma = sqrt(log(varValue/meanValueSq + 1)))
 }
 
-.optimStrictOrRelaxedXi <- function(phyloAndTransTree, logClockRatePriorMean, control) {
-  funForOptimiser <- function(logXiVec) {
-    for (i in seq_along(phyloAndTransTree$edge.length)) {
-      phyloAndTransTree$edge.length[[i]]$logXi <- logXiVec[[i]]
-    }
-    -1 * (.transTreeBranchLengthsConditionalLogPrior(phyloAndTransTree, MVratio = control$MCMC.control$transTreeBranchLengthsPriorMVratio) + .logClockRatesLogPrior(phyloAndTransTree, logClockRatePriorMean = logClockRatePriorMean, stdDev = control$MCMC.control$logClockRatesPriorSD, strict = control$strictClockModel))
-  }
-  startValue <- sapply(phyloAndTransTree$edge.length, "[[", "logXi")
-  optimResults <- nloptr::lbfgs(x0 = startValue, fn = funForOptimiser)
-  for (i in seq_along(phyloAndTransTree$edge.length)) {
-    phyloAndTransTree$edge.length[[i]]$logXi <- optimResults$par[[i]]
-  }
-  phyloAndTransTree
+.nodeTimesConditionalLogPrior <- function(phyloAndTransTree, meanLogClockRate, control) {
+  nodeNumbers <- (ape::Ntip(phyloAndTransTree) + 1):(length(phyloAndTransTree$edge.length) + 1)
+  logContribs <- sapply(nodeNumbers, function(nodeNumber) {
+    childrenNums <- phangorn::Children(phyloAndTransTree, nodeNumber)
+    correspXis <- sapply(childrenNums, function(childNum) {
+      edgeNum <- match(childNum, phyloAndTransTree$edge[, 2])
+      phyloAndTransTree$edge.length[edgeNum]$phylogeny/phyloAndTransTree$edge.length[edgeNum]$transmissionTree
+    })
+    sum(sapply(log(correspXis), .logXiPriorFun, meanValue = meanLogClockRate, stdDev = control$logClockRatePriorSD))
+  })
+  sum(logContribs)
 }
 
-
+.logXiPriorFun <- function(logXi, meanValue, stdDev) {
+  dnorm(logXi, mean = meanValue, sd = stdDev)
+}
