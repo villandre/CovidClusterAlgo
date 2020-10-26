@@ -47,7 +47,10 @@ findBayesianClusters <- function(
   evoParsList = NULL, # Must be specified if startingTreeFromChainIter is specified. It should be found in folderToSaveIntermediateResults if it was specified.
   clusterScoringFun = NULL,
   control = list()) {
-  # .performBasicChecks()
+  #.performBasicChecks()
+  if (!is.null(startingTreeFromChainIter) & is.null(evoParsList)) {
+    stop("You have specified a starting value for the tree (startingTreeFromChainIter) without the associated evolutionary parameters (evoParsList). \n")
+  }
   DNAbinData <- as.matrix(DNAbinData)
   perSiteClockRate <- perSiteClockRate/365 # Time is expressed in days in the code, whereas perSiteClockRate is expressed in substitutions per site per *year*.
   # Converting to value in days.
@@ -76,7 +79,7 @@ findBayesianClusters <- function(
       timestampsInDays <- as.numeric(seqsTimestampsPOSIXct)/86400
       names(timestampsInDays) <- names(seqsTimestampsPOSIXct)
       startingTree <- .genStartPhyloAndTransTreeAlt(phylogeny = startingValuePhylo, timestampsInDays = timestampsInDays, regionStamps = seqsRegionStamps, logClockRatePriorMean = log(perSiteClockRate), estRootTime = estRootTime, control = control)
-      if (is.null(evoParsList)) evoParsList <- MLphyloAndEvoPars$evoParsList
+      evoParsList <- MLphyloAndEvoPars$evoParsList
     }
 
     if (!is.null(control$MCMC.control$folderToSaveIntermediateResults)) {
@@ -84,9 +87,6 @@ findBayesianClusters <- function(
       save(control, file = filename)
       evoParsFilename <- paste(control$MCMC.control$folderToSaveIntermediateResults, "/chain_", chainId, "_evoParameters.Rdata", sep = "")
       save(evoParsList, file = evoParsFilename)
-    }
-
-    if (!is.null(control$MCMC.control$folderToSaveIntermediateResults)) {
       startingTreeFilename <- paste(control$MCMC.control$folderToSaveIntermediateResults, "/chain_", chainId, "_startingTree.Rdata", sep = "")
       save(startingTree, file = startingTreeFilename)
     }
