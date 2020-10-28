@@ -73,6 +73,7 @@ findBayesianClusters <- function(
   chainId <- chainIdCopy <- control$MCMC.control$chainId # Copy exists to distinguish a new id (which will be generated later on) and an id used previously.
   if (is.null(control$MCMC.control$folderToSaveIntermediateResults) | is.null(chainId)) {
     chainId <- stringi::stri_rand_strings(1, 6)
+    cat("Generated new chain ID: ", chainId, "\n")
     if (is.null(startingTree)) {
       MLphyloAndEvoPars <- .genMLphyloAndEvoPars(DNAbinData, rootSequenceName)
       startingValuePhylo <- MLphyloAndEvoPars$phylogeny
@@ -326,6 +327,7 @@ phylo <- function(edge, edge.length, tip.label, node.label = NULL) {
       chainState <- currentState[[chainNumber]]
       # for (MCMCiter in 1:(MCMCcontrol$n + MCMCcontrol$burnin)) {
       for (MCMCiter in 1:MCMCcontrol$nIterPerSweep) {
+        cat("Processing iteration", MCMCiter, "in cycle", sweepNum, "\n", sep = " ")
         # Re-ordering priors for node times
         logPriorAndTransFunList[tail(seq_along(logPriorAndTransFunList), n = ape::Nnode(chainState$phyloAndTransTree)) - 1] <- nodeTimesLogPriorAndTransFunList[chainState$nodeUpdateOrder] # Last element of logPriorAndTransFunList is for the topology, everything before that is for the node times, hence the re-shuffling of those elements.
         for (paraName in names(logPriorAndTransFunList)) {
@@ -460,10 +462,10 @@ MCMC.control <- function(n = 2e5, nIterPerSweep = 100, nChains = 1, temperatureP
 .topologyTransFun <- function(phyloAndTransTree) {
   counter <- 0
   # Help file says the tree must be bifurcating for rNNI to work.
-  phyloAndTransTree <- .resolveMulti(phyloAndTransTree)
+  proposedMove <- .resolveMulti(phyloAndTransTree)
   repeat {
     counter <- counter + 1
-    proposedMove <- phangorn::rNNI(phyloAndTransTree)
+    proposedMove <- phangorn::rNNI(proposedMove)
     newEdgeLengths <- .deriveTransTreeEdgeLengths(proposedMove)
     if (all(newEdgeLengths >= 0)) break
     if (counter == 50) {
@@ -1442,32 +1444,39 @@ getLogNormMMpars <- function(meanValue, varValue) {
 }
 
 .resolveMulti <- function(phyloAndTransTree) {
-  resolvedTree <- ape::multi2di(phyloAndTransTree)
-  for (edgeIndex in 1:length(resolvedTree$edge.length)) {
-    if (length(resolvedTree$edge.length[[edgeIndex]]) == 1) {
-      resolvedTree$edge.length[[edgeIndex]] <- list(phylogeny = 0, transmissionTree = 0, logXi = NA)
+  bifurcatingTree <- ape::multi2di(phyloAndTransTree)
+  newEdgeNums <- which(!sapply(bifurcatingTree$edge.length, is.list))
+  bifurcatingTree$edge.length[newEdgeNums] <- lapply(seq_along(newEdgeNums), function(x) list(phylogeny = 0, transmissionTree = 0, logXi = NA))
+  unresolvedNodesInOrder <- .getNodeUpdateOrderForMulti(bifurcatingTree)
+
+  for (nodeNum in unresolvedNodesInOrder) {
+    parentNum <- phangorn::Ancestors(bifurcatingTree, nodeNum, "parent")
+    bifurcatingTree$node.label[[nodeNum - ape::Ntip(bifurcatingTree)]] <- bifurcatingTree$node.label[[parentNum - ape::Ntip(bifurcatingTree)]]
+  }
+
+  bifurcatingTree
+}
+
+.getNodeUpdateOrderForMulti <- function(tree) {
+  unresolvedNodes <- which(!sapply(tree$node.label, is.list)) + ape::Ntip(tree)
+  resolvedInfoMat <- sapply(unresolvedNodes, function(nodeNum) {
+    parentNum <- phangorn::Ancestors(tree, nodeNum, "parent")
+    c(parentNum = parentNum, resolved = is.list(tree$node.label[[parentNum - ape::Ntip(tree)]]), processed = FALSE)
+  })
+  nodesToResolve <- rep(0, length(unresolvedNodes))
+  for (i in seq_along(unresolvedNodes)) {
+    colIndex <- match(TRUE, resolvedInfoMat["resolved", ] & !resolvedInfoMat["processed", ])
+    nodeNum <- unresolvedNodes[[colIndex]]
+    nodesToResolve[[i]] <- nodeNum
+    resolvedInfoMat["processed", colIndex] <- TRUE
+    childrenNodes <- phangorn::Children(tree, nodeNum)
+    unresolvedChildrenNums <- intersect(childrenNodes, unresolvedNodes)
+    if (length(unresolvedChildrenNums) > 0) {
+      matchingColNums <- match(unresolvedChildrenNums, unresolvedNodes)
+      resolvedInfoMat["resolved", matchingColNums] <- TRUE
     }
   }
-  resolvedNodesBool <- sapply(resolvedTree$node.label, is.list)
-  repeat {
-    undefinedNodeSeq <- currentNode <- match(FALSE, resolvedNodesBool) + ape::Ntip(resolvedTree)
-    if (is.na(undefinedNodeSeq)) break
-    repeat {
-      parentNum <- phangorn::Ancestors(resolvedTree, currentNode, "parent")
-      parentNode <- resolvedTree$node.label[[parentNum - ape::Ntip(resolvedTree)]]
-      if (is.list(parentNode)) {
-        for (nodeNum in undefinedNodeSeq) {
-          resolvedTree$node.label[[nodeNum - ape::Ntip(resolvedTree)]] <- list(time = parentNode$time, region = parentNode$region)
-        }
-        resolvedNodesBool[undefinedNodeSeq - ape::Ntip(resolvedTree)] <- TRUE
-        break
-      } else {
-        undefinedNodeSeq <- c(undefinedNodeSeq, parentNum)
-        currentNode <- parentNum
-      }
-    }
-  }
-  resolvedTree
+  nodesToResolve
 }
 
 .collapseIntoMulti <- function(phyloAndTransTree, threshold = 1e-8) {
