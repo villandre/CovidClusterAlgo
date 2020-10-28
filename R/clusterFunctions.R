@@ -1396,30 +1396,30 @@ getLogNormMMpars <- function(meanValue, varValue) {
 
 .nodeTimeTransFun <- function(phyloAndTransTree, nodeNumber, tuningPara = 0.5, rootTransitionPar = 15) {
   numTips <- length(phyloAndTransTree$tip.label)
-  updateNodeTime <- function(nodeIndex) {
-    currentTime <- phyloAndTransTree$node.label[[nodeIndex - numTips]]$time
-    childrenIndices <- phangorn::Children(phyloAndTransTree, nodeIndex)
-    childrenTimes <- sapply(childrenIndices, function(childIndex) .getVertexLabel(phyloAndTransTree, childIndex)$time)
-    branchIndex <- match(nodeIndex, phyloAndTransTree$edge[ , 2])
-    if (!is.na(branchIndex)) {
-      lowerBound <- currentTime - phyloAndTransTree$edge.length[[branchIndex]]$transmissionTree * tuningPara
-    } else {
-      lowerBound <- currentTime - runif(1, 0, rootTransitionPar) # Time is in days.
-    }
-    upperBound <- currentTime + abs(min(childrenTimes) - currentTime) * tuningPara
-    updatedTime <- runif(1, lowerBound, upperBound)
-    updatedTime
+
+  currentTime <- phyloAndTransTree$node.label[[nodeNumber - numTips]]$time
+  childrenNums <- phangorn::Children(phyloAndTransTree, nodeNumber)
+  childrenTimes <- sapply(childrenNums, function(childIndex) .getVertexLabel(phyloAndTransTree, childIndex)$time)
+  branchIndex <- match(nodeNumber, phyloAndTransTree$edge[ , 2])
+  if (!is.na(branchIndex)) {
+    lowerBound <- currentTime - phyloAndTransTree$edge.length[[branchIndex]]$transmissionTree * tuningPara
+  } else {
+    lowerBound <- currentTime - runif(1, 0, rootTransitionPar) # Time is in days.
   }
-  updatedNodeTime <- updateNodeTime(nodeNumber)
+  upperBound <- currentTime + abs(min(childrenTimes) - currentTime) * tuningPara
+  updatedNodeTime <- runif(1, lowerBound, upperBound)
 
   phyloAndTransTree$node.label[[nodeNumber - numTips]]$time <- updatedNodeTime
-  updatedTransTreeEdges <- .deriveTransTreeEdgeLengths(phyloAndTransTree)
-  phyloAndTransTree$edge.length <- lapply(seq_along(phyloAndTransTree$edge.length), function(edgeIndex) {
-    updatedEdgeLength <- phyloAndTransTree$edge.length[[edgeIndex]]
-    updatedEdgeLength$transmissionTree <- updatedTransTreeEdges[[edgeIndex]]
-    updatedEdgeLength$logXi <- log(updatedEdgeLength$phylogeny) - log(updatedEdgeLength$transmissionTree)
-    updatedEdgeLength
-  })
+  if (!is.na(branchIndex)) { # Root node has no parent, hence the check.
+    phyloAndTransTree$edge.length[[branchIndex]]$transmissionTree <- phyloAndTransTree$edge.length[[branchIndex]]$transmissionTree + (updatedNodeTime - currentTime)
+    phyloAndTransTree$edge.length[[branchIndex]]$logXi <- log(phyloAndTransTree$edge.length[[branchIndex]]$phylogeny) - log(phyloAndTransTree$edge.length[[branchIndex]]$transmissionTree)
+  }
+
+  childrenIndices <- match(childrenNums, phyloAndTransTree$edge[ , 2])
+  for (index in seq_along(childrenIndices)) {
+    phyloAndTransTree$edge.length[[childrenIndices[[index]]]]$transmissionTree <- childrenTimes[[index]] - updatedNodeTime
+    phyloAndTransTree$edge.length[[childrenIndices[[index]]]]$logXi <- log(phyloAndTransTree$edge.length[[childrenIndices[[index]]]]$phylogeny) - log(phyloAndTransTree$edge.length[[childrenIndices[[index]]]]$transmissionTree)
+  }
 
   list(value = phyloAndTransTree, transKernRatio = 1) # The uniform transition kernel is symmetrical.
 }
