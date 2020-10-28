@@ -277,7 +277,7 @@ phylo <- function(edge, edge.length, tip.label, node.label = NULL) {
     cat("Launching MCMC... \n")
   }
 
-  logPriorAndTransFunList <- list(
+  basicLogPriorAndTransFunList <- list(
     b = list( # The mean here corresponds to 14 days for the time between the time the sequence is sampled and the time at which the first transmission linking it to another sequence in the sample occurred.
       logPriorFun =  function(x) .phyloBranchLengthsLogPriorFun(phyloAndTransTree = x, extBranchLengthPriorMean = perSiteClockRate * 14, extBranchLengthPriorSD = perSiteClockRate * 50),
       transFun = function(x) .phyloBranchLengthsTransFun(x, logTransKernSD = MCMCcontrol$phyloBranchLengthsLogTransKernSD, propToModify = MCMCcontrol$propPhyloBranchesToModify)),
@@ -292,14 +292,14 @@ phylo <- function(edge, edge.length, tip.label, node.label = NULL) {
   })
   timeNames <- paste("t", nodeNumbers, sep = "")
   names(nodeTimesLogPriorAndTransFunList) <- timeNames
-  logPriorAndTransFunList <- c(logPriorAndTransFunList, nodeTimesLogPriorAndTransFunList[nodeOrder - ape::Ntip(startingTree)])
   logPriorAndTransFunTopology <- list(
     topology = list(
     logPriorFun = function(x) {
       .topologyLogPriorFun(phyloAndTransTree = x, numMigrationsPoissonPriorMean = control$numMigrationsPoissonPriorMean, estRootTime = estRootTime, control = control)
     },
     transFun = .topologyTransFun))
-  logPriorAndTransFunList <- c(logPriorAndTransFunList, logPriorAndTransFunTopology) # Topology is processed last since it might change the order in which parameters must be updated (conditioning for node time priors is with respect to children node times).
+
+  logPriorAndTransFunList <- c(basicLogPriorAndTransFunList, nodeTimesLogPriorAndTransFunList[nodeOrder - ape::Ntip(startingTree)], logPriorAndTransFunTopology) # Topology is processed last since it might change the order in which parameters must be updated (conditioning for node time priors is with respect to children node times).
 
   if (length(filesToRestore) == 0) { # New chains...
     logPriorValue <- sapply(names(logPriorAndTransFunList), FUN = function(paraName) logPriorAndTransFunList[[paraName]]$logPriorFun(currentState[[1]]$phyloAndTransTree))
@@ -327,9 +327,6 @@ phylo <- function(edge, edge.length, tip.label, node.label = NULL) {
       chainState <- currentState[[chainNumber]]
       # for (MCMCiter in 1:(MCMCcontrol$n + MCMCcontrol$burnin)) {
       for (MCMCiter in 1:MCMCcontrol$nIterPerSweep) {
-        cat("Processing iteration", MCMCiter, "in cycle", sweepNum, "\n", sep = " ")
-        # Re-ordering priors for node times
-        logPriorAndTransFunList[tail(seq_along(logPriorAndTransFunList), n = ape::Nnode(chainState$phyloAndTransTree)) - 1] <- nodeTimesLogPriorAndTransFunList[chainState$nodeUpdateOrder] # Last element of logPriorAndTransFunList is for the topology, everything before that is for the node times, hence the re-shuffling of those elements.
         for (paraName in names(logPriorAndTransFunList)) {
           proposalValueAndTransKernRatio <- logPriorAndTransFunList[[paraName]]$transFun(chainState$phyloAndTransTree)
           updatedLogPrior <- chainState$logPrior
@@ -353,6 +350,10 @@ phylo <- function(edge, edge.length, tip.label, node.label = NULL) {
             chainState$evoParsList <- evoParsList # Needlessly repeated, but does not take too much memory, and allows the chains to be easily resumed from any iteration.
             if (paraName == "topology") {
               chainState$nodeUpdateOrder <- .getOrderedNodeNumsForTimeUpdate(updatedDualTree) - ape::Ntip(updatedDualTree)
+              # The re-shuffling forces the re-computation of log-priors for node times.
+              updatedLogPrior[timeNames] <- sapply(timeNames, function(timeName) logPriorAndTransFunList[[timeName]]$logPriorFun(updatedDualTree))
+              # Re-ordering priors for node times
+              logPriorAndTransFunList[tail(seq_along(logPriorAndTransFunList), n = ape::Nnode(chainState$phyloAndTransTree)) - 1] <- nodeTimesLogPriorAndTransFunList[chainState$nodeUpdateOrder - ape::Ntip(updatedDualTree)] # Last element of logPriorAndTransFunList is for the topology, everything before that is for the node times, hence the re-shuffling of those elements.
             }
           }
         }
@@ -380,10 +381,12 @@ phylo <- function(edge, edge.length, tip.label, node.label = NULL) {
       currentState <<- lapply(X = 1:MCMCcontrol$nChains, FUN = chainFun)
     }
     cat("Processed MCMC iteration ", sweepNum * MCMCcontrol$nIterPerSweep, ".\n", sep = "")
-    cat("\n\n\n Current log-lik.:", currentState[[1]]$logLik)
-    cat("Current log-PP:", currentState[[1]]$logPP, "\n\n")
+    cat("\n\n\n Current log-lik.:", currentState[[1]]$logLik, "\n")
+    cat("Current log-PP:", currentState[[1]]$logPP, "\n")
     cat("Current log-priors: \n")
-    print(currentState[[1]]$logPrior)
+    nodeTimesPriorSum <- sum(currentState[[1]]$logPrior[timeNames])
+    print(c(currentState[[1]]$logPrior[c("topology", "b")], nodeTimes = nodeTimesPriorSum))
+    cat("\n\n")
     # if ((MCMCiter %% MCMCcontrol$stepSize) == 0) {
     MCMCcontainer[[sweepNum]] <<- currentState
     if (!is.null(MCMCcontrol$folderToSaveIntermediateResults)) {
@@ -408,21 +411,23 @@ phylo <- function(edge, edge.length, tip.label, node.label = NULL) {
 }
 
 .updateLogPrior <- function(updatedDualTree, previousLogPriorValues, paraName, timeNames, logPriorAndTransFunList) {
-  nodePrefix <- stringr::str_extract(timeNames[[1]], pattern = "[:alpha:]+(?=[:digit:])")
-  timeNameRoot <- stringr::str_c(nodePrefix, ape::Ntip(updatedDualTree) + 1, sep = "")
   updatedLogPrior <- previousLogPriorValues
   updatedLogPrior[[paraName]] <- logPriorAndTransFunList[[paraName]]$logPriorFun(updatedDualTree)
   if (paraName == "b") { # Not very efficient: a modification of a given value of b only affects one branch...
     updatedLogPrior[timeNames] <- sapply(timeNames, function(timeName) {
       logPriorAndTransFunList[[timeName]]$logPriorFun(updatedDualTree)
     })
-  } else if (paraName %in% setdiff(timeNames, timeNameRoot)) {
-    nodeNumber <- as.numeric(stringr::str_extract(paraName, pattern = "(?<=[:alpha:])[:digit:]+"))
+  } else if (paraName %in% timeNames) {
+    nodeNumber <- as.numeric(stringr::str_sub(paraName, start = 2)) # Will not work if prefix is no longer "t"...
     parentNum <- phangorn::Ancestors(updatedDualTree, nodeNumber, "parent")
-    parentLabel <- stringr::str_c(nodePrefix, parentNum, sep = "")
-    updatedLogPrior[[parentLabel]] <- logPriorAndTransFunList[[parentLabel]]$logPriorFun(updatedDualTree)
+    if (parentNum > 0) {
+      parentMatchIndex <- grep(x = timeNames, pattern = parentNum)
+      updatedLogPrior[[parentMatchIndex]] <- logPriorAndTransFunList[[parentMatchIndex]]$logPriorFun(updatedDualTree)
+    }
   } else if (paraName == "Lambda") {
     updatedLogPrior[["topology"]] <- logPriorAndTransFunList[["topology"]]$logPriorFun(updatedDualTree)
+  } else if (paraName == "topology") {
+    # Actually, a change in the topology does not change the number of branches or their lengths, and so, the sum of the priors for node times should not be affected, although their names will change.
   }
   updatedLogPrior
 }
@@ -463,6 +468,7 @@ MCMC.control <- function(n = 2e5, nIterPerSweep = 100, nChains = 1, temperatureP
   counter <- 0
   # Help file says the tree must be bifurcating for rNNI to work.
   proposedMove <- .resolveMulti(phyloAndTransTree)
+  moveFound <- TRUE
   repeat {
     counter <- counter + 1
     proposedMove <- phangorn::rNNI(proposedMove)
@@ -470,6 +476,7 @@ MCMC.control <- function(n = 2e5, nIterPerSweep = 100, nChains = 1, temperatureP
     if (all(newEdgeLengths >= 0)) break
     if (counter == 50) {
       cat("Could not find a suitable move in the topological space... \n")
+      moveFound <- FALSE
       proposedMove <- phyloAndTransTree
       break
     }
@@ -479,8 +486,12 @@ MCMC.control <- function(n = 2e5, nIterPerSweep = 100, nChains = 1, temperatureP
   # A change in the topology can affect node region assignment.
   proposedMove <- .clearNodeRegions(proposedMove)
   proposedMove <- .identifyNodeRegions(proposedMove)
+  transKernRatio <- 1
+  if (!moveFound) {
+    transKernRatio <- 1e-200 # It will avoid some computations to force the algorithm to fail to move to an identical state.
+  }
 
-  list(value = proposedMove, transKernRatio = 1)
+  list(value = proposedMove, transKernRatio = transKernRatio)
 }
 
 .convertToTransTree <- function(phyloAndTransTree) {
