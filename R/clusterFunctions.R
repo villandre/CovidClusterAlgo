@@ -331,6 +331,10 @@ phylo <- function(edge, edge.length, tip.label, node.label = NULL) {
           proposalValueAndTransKernRatio <- logPriorAndTransFunList[[paraName]]$transFun(chainState$phyloAndTransTree)
           updatedLogPrior <- chainState$logPrior
           updatedDualTree <- proposalValueAndTransKernRatio$value
+          if (ape::Nnode(updatedDualTree) != ape::Nnode(chainState$phyloAndTransTree)) {
+            cat("Chage in the number of nodes! \n")
+            browser()
+          }
           updatedLogLik <- chainState$logLik
           if (paraName %in% c("topology", "b")) {
             updatedLogLik <- logLikFun(.convertToPhylo(updatedDualTree), phyDatData, evoParsList)
@@ -353,7 +357,7 @@ phylo <- function(edge, edge.length, tip.label, node.label = NULL) {
               # The re-shuffling forces the re-computation of log-priors for node times.
               updatedLogPrior[timeNames] <- sapply(timeNames, function(timeName) logPriorAndTransFunList[[timeName]]$logPriorFun(updatedDualTree))
               # Re-ordering priors for node times
-              logPriorAndTransFunList[tail(seq_along(logPriorAndTransFunList), n = ape::Nnode(chainState$phyloAndTransTree)) - 1] <- nodeTimesLogPriorAndTransFunList[chainState$nodeUpdateOrder - ape::Ntip(updatedDualTree)] # Last element of logPriorAndTransFunList is for the topology, everything before that is for the node times, hence the re-shuffling of those elements.
+              logPriorAndTransFunList[tail(seq_along(logPriorAndTransFunList), n = ape::Nnode(chainState$phyloAndTransTree)) - 1] <- nodeTimesLogPriorAndTransFunList[chainState$nodeUpdateOrder] # Last element of logPriorAndTransFunList is for the topology, everything before that is for the node times, hence the re-shuffling of those elements.
             }
           }
         }
@@ -465,31 +469,10 @@ MCMC.control <- function(n = 2e5, nIterPerSweep = 100, nChains = 1, temperatureP
 }
 
 .topologyTransFun <- function(phyloAndTransTree) {
-  counter <- 0
-  # Help file says the tree must be bifurcating for rNNI to work.
-  proposedMove <- .resolveMulti(phyloAndTransTree)
-  moveFound <- TRUE
-  repeat {
-    counter <- counter + 1
-    proposedMove <- phangorn::rNNI(proposedMove)
-    newEdgeLengths <- .deriveTransTreeEdgeLengths(proposedMove)
-    if (all(newEdgeLengths >= 0)) break
-    if (counter == 50) {
-      cat("Could not find a suitable move in the topological space... \n")
-      moveFound <- FALSE
-      proposedMove <- phyloAndTransTree
-      break
-    }
-  }
-  proposedMove <- .collapseIntoMulti(proposedMove)
-
-  # A change in the topology can affect node region assignment.
-  proposedMove <- .clearNodeRegions(proposedMove)
-  proposedMove <- .identifyNodeRegions(proposedMove)
   transKernRatio <- 1
-  if (!moveFound) {
-    transKernRatio <- 1e-200 # It will avoid some computations to force the algorithm to fail to move to an identical state.
-  }
+  proposedMove <- .rNNItransTree(phyloAndTransTree)
+  # I don't want a move to be processed if the proposal is identical to the original state.
+  if (identical(proposedMove, phyloAndTransTree)) transKernRatio <- 1e-300
 
   list(value = proposedMove, transKernRatio = transKernRatio)
 }
@@ -727,11 +710,18 @@ MCMC.control <- function(n = 2e5, nIterPerSweep = 100, nChains = 1, temperatureP
   phyloAndTransTree
 }
 
-.deriveTransTreeEdgeLengths <- function(phyloAndTransTree) {
-  childNodeNumbers <- phyloAndTransTree$edge[ , 2]
-  parentNodeNumbers <- phyloAndTransTree$edge[ , 1]
-  numTips <- length(phyloAndTransTree$tip.label)
-  sapply(childNodeNumbers, function(x) .getVertexLabel(phylogeny = phyloAndTransTree, vertexNum = x)$time) - sapply(parentNodeNumbers, function(x) phyloAndTransTree$node.label[[x - numTips]]$time)
+.updateTransTreeEdgeLengths <- function(phyloAndTransTree) {
+  updatedPhyloAndTransTree <- phyloAndTransTree
+  childNodeNumbers <- updatedPhyloAndTransTree$edge[ , 2]
+  parentNodeNumbers <- updatedPhyloAndTransTree$edge[ , 1]
+  numTips <- length(updatedPhyloAndTransTree$tip.label)
+  newLengths <- sapply(childNodeNumbers, function(x) .getVertexLabel(phylogeny = updatedPhyloAndTransTree, vertexNum = x)$time) - sapply(parentNodeNumbers, function(x) updatedPhyloAndTransTree$node.label[[x - numTips]]$time)
+
+  for (i in seq_along(newLengths)) {
+    updatedPhyloAndTransTree$edge.length[[i]]$transmissionTree <- newLengths[[i]]
+    updatedPhyloAndTransTree$edge.length[[i]]$logXi <- log(updatedPhyloAndTransTree$edge.length[[i]]$phylogeny) - log(updatedPhyloAndTransTree$edge.length[[i]]$transmissionTree)
+  }
+  updatedPhyloAndTransTree
 }
 
 .getVertexTimes <- function(phyloAndTransTree, type = c("all", "nodes", "tips")) {
@@ -1490,10 +1480,40 @@ getLogNormMMpars <- function(meanValue, varValue) {
   nodesToResolve
 }
 
-.collapseIntoMulti <- function(phyloAndTransTree, threshold = 1e-8) {
+.collapseIntoMulti <- function(phyloAndTransTree, threshold = 1e-300) {
   phylogeny <- phyloAndTransTree
   phylogeny$edge.length <- sapply(phylogeny$edge.length, "[[", "phylogeny")
-  collapsedTree <- ape::di2multi(phylogeny, threshold = threshold)
+  collapsedTree <- ape::di2multi(phylogeny, tol = threshold)
   collapsedTree$edge.length <- lapply(collapsedTree$edge.length, function(edgeLength) list(phylogeny = edgeLength))
   .addTransTreeEdgeLengths(collapsedTree)
+}
+
+# For a NNI move to be possible with respect to the transmission tree, the sibling of the child node of the internal branch selected for the move be assigned a time point which is higher (lower in the tree).
+# Function should work if there's a multifurcation for the tips, but not for internal nodes.
+.rNNItransTree <- function(phyloAndTransTree, moves = 1) {
+  childNodesToTry <- sample(seq(from = ape::Ntip(phyloAndTransTree) + 2, to = length(phyloAndTransTree$edge.length) + 1), size = ape::Nnode(phyloAndTransTree) - 1)
+  index <- 1
+  while (index <= length(childNodesToTry)) {
+    childNum <- childNodesToTry[[index]]
+    nodeTime <- phyloAndTransTree$node.label[[childNum - ape::Ntip(phyloAndTransTree)]]$time
+    nodeSibling <- phangorn::Siblings(phyloAndTransTree, childNum)
+    siblingTime <- .getVertexLabel(phyloAndTransTree, nodeSibling)$time
+    if ((siblingTime > nodeTime)) break
+    index <- index + 1
+  }
+  treeToReturn <- phyloAndTransTree
+  if (index > length(childNodesToTry)) {
+    warning("Could not find a suitable NNI move for the transmission tree! \n")
+  } else {
+    siblingEdgeNum <- match(nodeSibling, phyloAndTransTree$edge[ , 2])
+    grandChildrenEdgeNums <- which(phyloAndTransTree$edge[ , 1] == childNum)
+    edgeNumForInterchange <- sample(grandChildrenEdgeNums, size = 1)
+    treeToReturn$edge[c(siblingEdgeNum, edgeNumForInterchange), 2] <- treeToReturn$edge[c(edgeNumForInterchange, siblingEdgeNum), 2]
+    # edge.length gives supporting branch lengths for nodes listed in the second column of edge. It follows that exchanging two elements in that column must result in a similar exchange of the elements of edge.length.
+    treeToReturn$edge.length[c(siblingEdgeNum, edgeNumForInterchange)] <- treeToReturn$edge.length[c(edgeNumForInterchange, siblingEdgeNum)]
+  }
+  treeToReturn <- .updateTransTreeEdgeLengths(treeToReturn)
+  treeToReturn <- .clearNodeRegions(treeToReturn)
+  treeToReturn <- .identifyNodeRegions(treeToReturn)
+  treeToReturn
 }
