@@ -633,7 +633,7 @@ MCMC.control <- function(n = 2e5, nIterPerSweep = 100, nChains = 1, temperatureP
 # It is then enough to pick a value for sigma, the variance of the random variable expressed on the log-scale, to get a suitable value for mu.
 # A better setup might involve working on the logarithmic scale and simulating normal numbers, making the transition kernel symmetric.
 
-.phyloBranchLengthsTransFun <- function(phyloAndTransTree, logTransKernSD = log(1.05), propToModify = 0.1) {
+.phyloBranchLengthsTransFun <- function(phyloAndTransTree, logTransKernSD = 0.5, propToModify = 0.1) {
   branchLengths <- sapply(phyloAndTransTree$edge.length, FUN = '[[', "phylogeny")
   numToModify <- 1
   if (propToModify > 0) {
@@ -641,13 +641,14 @@ MCMC.control <- function(n = 2e5, nIterPerSweep = 100, nChains = 1, temperatureP
   }
   branchesToModify <- sample.int(n = length(branchLengths), size = numToModify, replace = FALSE)
   previousLengths <- branchLengths[branchesToModify]
-  logScaleMean <- log(previousLengths)
-  newLengths <- exp(rnorm(n = length(logScaleMean), mean = logScaleMean, sd = logTransKernSD))
-  transKernRatio <- 1
+  # logScaleMean <- log(previousLengths)
+  # newLengths <- exp(rnorm(n = length(logScaleMean), mean = logScaleMean, sd = logTransKernSD))
+  multipliers <- runif(length(previousLengths), min = 1 - logTransKernSD, max = 1 + logTransKernSD)
+  newLengths <- multipliers * previousLengths
   for (i in seq_along(branchesToModify)) {
     phyloAndTransTree$edge.length[[branchesToModify[[i]]]]$phylogeny <- newLengths[[i]]
   }
-  list(value = phyloAndTransTree, transKernRatio = transKernRatio)
+  list(value = phyloAndTransTree, transKernRatio = 1)
 }
 
 .identifyNodeRegions <- function(transmissionTree) {
