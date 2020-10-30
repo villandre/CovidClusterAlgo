@@ -331,15 +331,11 @@ phylo <- function(edge, edge.length, tip.label, node.label = NULL) {
           proposalValueAndTransKernRatio <- logPriorAndTransFunList[[paraName]]$transFun(chainState$phyloAndTransTree)
           updatedLogPrior <- chainState$logPrior
           updatedDualTree <- proposalValueAndTransKernRatio$value
-          if (ape::Nnode(updatedDualTree) != ape::Nnode(chainState$phyloAndTransTree)) {
-            cat("Chage in the number of nodes! \n")
-            browser()
-          }
           updatedLogLik <- chainState$logLik
           if (paraName %in% c("topology", "b")) {
             updatedLogLik <- logLikFun(.convertToPhylo(updatedDualTree), phyDatData, evoParsList)
           }
-          updatedLogPrior <- .updateLogPrior(updatedDualTree, chainState$logPrior, paraName = paraName, timeNames = timeNames, logPriorAndTransFunList = logPriorAndTransFunList)
+          updatedLogPrior <- .updateLogPrior(updatedDualTree, chainState$phyloAndTransTree, chainState$logPrior, paraName = paraName, timeNames = timeNames, logPriorAndTransFunList = logPriorAndTransFunList)
 
           proposalLogPP <- (updatedLogLik + sum(updatedLogPrior)) * 1/MCMCcontrol$temperatureParFun(chainNumber)
           exponentValue <- proposalLogPP - chainState$logPP
@@ -414,11 +410,14 @@ phylo <- function(edge, edge.length, tip.label, node.label = NULL) {
   lapply(MCMCcontainer[-elementsToDrop], '[[', 1) # We only keep the cold chain.
 }
 
-.updateLogPrior <- function(updatedDualTree, previousLogPriorValues, paraName, timeNames, logPriorAndTransFunList) {
+.updateLogPrior <- function(updatedDualTree, originalDualTree, previousLogPriorValues, paraName, timeNames, logPriorAndTransFunList) {
   updatedLogPrior <- previousLogPriorValues
   updatedLogPrior[[paraName]] <- logPriorAndTransFunList[[paraName]]$logPriorFun(updatedDualTree)
-  if (paraName == "b") { # Not very efficient: a modification of a given value of b only affects one branch...
-    updatedLogPrior[timeNames] <- sapply(timeNames, function(timeName) {
+  if (paraName == "b") {
+    diffBranchIndices <- sapply(updatedDualTree$edge.length, "[[", "phylogeny") != sapply(originalDualTree$edge.length, "[[", "phylogeny")
+    parentNums <- unique(updatedDualTree$edge[diffBranchIndices, 1])
+    affectedTimes <- sapply(parentNums, grep, x = timeNames, value = TRUE)
+    updatedLogPrior[affectedTimes] <- sapply(affectedTimes, function(timeName) {
       logPriorAndTransFunList[[timeName]]$logPriorFun(updatedDualTree)
     })
   } else if (paraName %in% timeNames) {
@@ -647,7 +646,9 @@ MCMC.control <- function(n = 2e5, nIterPerSweep = 100, nChains = 1, temperatureP
   newLengths <- multipliers * previousLengths
   for (i in seq_along(branchesToModify)) {
     phyloAndTransTree$edge.length[[branchesToModify[[i]]]]$phylogeny <- newLengths[[i]]
+    phyloAndTransTree$edge.length[[branchesToModify[[i]]]]$logXi <- log(newLengths[[i]]) - log(phyloAndTransTree$edge.length[[branchesToModify[[i]]]]$transmissionTree)
   }
+
   list(value = phyloAndTransTree, transKernRatio = 1)
 }
 
