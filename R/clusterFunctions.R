@@ -472,7 +472,6 @@ MCMC.control <- function(n = 2e5, nIterPerSweep = 100, nChains = 1, temperatureP
   proposedMove <- .rNNItransTree(phyloAndTransTree)
   # I don't want a move to be processed if the proposal is identical to the original state.
   if (identical(proposedMove, phyloAndTransTree)) transKernRatio <- 1e-300
-
   list(value = proposedMove, transKernRatio = transKernRatio)
 }
 
@@ -1491,15 +1490,24 @@ getLogNormMMpars <- function(meanValue, varValue) {
 }
 
 # For a NNI move to be possible with respect to the transmission tree, the sibling of the child node of the internal branch selected for the move be assigned a time point which is higher (lower in the tree).
-# Function should work if there's a multifurcation for the tips, but not for internal nodes.
+# Function should work with multifurcations.
 .rNNItransTree <- function(phyloAndTransTree, moves = 1) {
   childNodesToTry <- sample(seq(from = ape::Ntip(phyloAndTransTree) + 2, to = length(phyloAndTransTree$edge.length) + 1), size = ape::Nnode(phyloAndTransTree) - 1)
   index <- 1
   while (index <= length(childNodesToTry)) {
     childNum <- childNodesToTry[[index]]
     nodeTime <- phyloAndTransTree$node.label[[childNum - ape::Ntip(phyloAndTransTree)]]$time
-    nodeSibling <- phangorn::Siblings(phyloAndTransTree, childNum)
-    siblingTime <- .getVertexLabel(phyloAndTransTree, nodeSibling)$time
+    nodeSiblings <- phangorn::Siblings(phyloAndTransTree, childNum)
+    nodeSiblingsTryOrder <- nodeSiblings
+    if (length(nodeSiblingsTryOrder) > 1) {
+      nodeSiblingsTryOrder <- sample(nodeSiblings, size = length(nodeSiblings)) # 'sample' is called in case we have a multifurcation
+    }
+
+    for (siblingIndex in seq_along(nodeSiblingsTryOrder)) {
+      nodeSibling <- nodeSiblingsTryOrder[[siblingIndex]]
+      siblingTime <- .getVertexLabel(phyloAndTransTree, nodeSibling)$time
+      if ((siblingTime > nodeTime)) break
+    }
     if ((siblingTime > nodeTime)) break
     index <- index + 1
   }
