@@ -159,13 +159,11 @@ findBayesianClusters.control <- function(
   MCMC.control = MCMC.control(),
   transTreeCondOnPhylo = TRUE,
   controlForGenStartTransmissionTree = .controlForGenStartTransmissionTree(),
-  fixedClockRate = TRUE,
-  strictClockModel = TRUE,
   saveData = TRUE,
   resolvePolytomies = FALSE,
   epidemicRootTimePriorVar = 1/86400,
   lengthForNullExtBranchesInPhylo = 0) {
-  list(logLikFun = logLikFun, numMigrationsPoissonPriorMean = numMigrationsPoissonPriorMean, MCMC.control = do.call("MCMC.control", MCMC.control), controlForGenStartTransmissionTree = do.call(".controlForGenStartTransmissionTree", controlForGenStartTransmissionTree), transTreeCondOnPhylo = transTreeCondOnPhylo, fixedClockRate = fixedClockRate, strictClockModel = strictClockModel, saveData = saveData, resolvePolytomies = resolvePolytomies, epidemicRootTimePriorVar = epidemicRootTimePriorVar, lengthForNullExtBranchesInPhylo = lengthForNullExtBranchesInPhylo)
+  list(logLikFun = logLikFun, numMigrationsPoissonPriorMean = numMigrationsPoissonPriorMean, MCMC.control = do.call("MCMC.control", MCMC.control), controlForGenStartTransmissionTree = do.call(".controlForGenStartTransmissionTree", controlForGenStartTransmissionTree), transTreeCondOnPhylo = transTreeCondOnPhylo, saveData = saveData, resolvePolytomies = resolvePolytomies, epidemicRootTimePriorVar = epidemicRootTimePriorVar, lengthForNullExtBranchesInPhylo = lengthForNullExtBranchesInPhylo)
 }
 
 .performBasicChecks <- function() {
@@ -253,8 +251,10 @@ phylo <- function(edge, edge.length, tip.label, node.label = NULL) {
   MCMCcontrol <- control$MCMC.control
   phyDatData <- phangorn::as.phyDat(DNAbinData)
   # The following assumes that the order of tip labels matches the order of sequences in DNAbinData.
+  if (MCMCcontrol$nChains == 1) {
+    MCMCcontrol$numIterPerSweep <- MCMCcontrol$stepSize # This is to ensure that intermediate results are saved each time a step is completed. By default, they are saved after a swap is attempted.
+  }
   startIterNum <- 1
-  MCMCcontainer <- vector(mode = "list", length = floor((MCMCcontrol$n + MCMCcontrol$burnin)/MCMCcontrol$nIterPerSweep))
   filesToRestore <- NULL
   if (!is.null(MCMCcontrol$folderToSaveIntermediateResults) & !is.null(MCMCcontrol$chainId)) {
     filesToRestore <- list.files(path = MCMCcontrol$folderToSaveIntermediateResults, pattern = paste(MCMCcontrol$chainId, "_atIter", sep = ""), full.names = TRUE)
@@ -262,7 +262,8 @@ phylo <- function(edge, edge.length, tip.label, node.label = NULL) {
   phyloObj <- .convertToPhylo(startingTree)
   startLogLikValue <- logLikFun(phyloObj, phyDatData, evoParsList)
   nodeOrder <- .getOrderedNodeNumsForTimeUpdate(startingTree)
-  currentState <- lapply(1:MCMCcontrol$nChains, function(x) list(phyloAndTransTree = startingTree, logLik = startLogLikValue, nodeUpdateOrder = nodeOrder - ape::Ntip(startingTree))) # All chains start in the same state.
+  startingState <- lapply(1:MCMCcontrol$nChains, function(x) list(phyloAndTransTree = startingTree, logLik = startLogLikValue, nodeUpdateOrder = nodeOrder - ape::Ntip(startingTree))) # All chains start in the same state.
+  MCMCcontainer <- vector(mode = "list", length = floor((MCMCcontrol$n + MCMCcontrol$burnin)/MCMCcontrol$stepSize))
   if (length(filesToRestore) > 0) {
     iterNums <- as.numeric(stringr::str_extract(filesToRestore, "[:digit:]+(?=.Rdata)"))
     filesToRestoreOrder <- order(iterNums)
@@ -271,19 +272,19 @@ phylo <- function(edge, edge.length, tip.label, node.label = NULL) {
       get(loadName)
     })
     startIterNum <- max(iterNums) + 1
-    currentState <- MCMCcontainer[[length(filesToRestore)]]
     cat("Resuming MCMC at iteration ", startIterNum, ". \n", sep = "")
+    startingState <- MCMCcontainer[[length(filesToRestore)]]
   } else {
     cat("Launching MCMC... \n")
   }
 
   basicLogPriorAndTransFunList <- list(
     b = list( # The mean here corresponds to 14 days for the time between the time the sequence is sampled and the time at which the first transmission linking it to another sequence in the sample occurred.
-      logPriorFun =  function(x) .phyloBranchLengthsLogPriorFun(phyloAndTransTree = x, extBranchLengthPriorMean = perSiteClockRate * 14, extBranchLengthPriorSD = perSiteClockRate * 50),
-      transFun = function(x) .phyloBranchLengthsTransFun(x, logTransKernSD = MCMCcontrol$phyloBranchLengthsLogTransKernSD, propToModify = MCMCcontrol$propPhyloBranchesToModify)),
-   Lambda = list(
-     logPriorFun = .coalescenceRatesLogPriorFun,
-     transFun = function(x) .coalescenceRatesTransFun(x, sd = MCMCcontrol$coalRateKernelSD)))
+      logPriorFun =  function(x) .phyloBranchLengthsLogPriorFun(phyloAndTransTree = x, extBranchLengthPriorMean = perSiteClockRate * 14, extBranchLengthPriorSD = perSiteClockRate * 280),
+      transFun = function(x) .phyloBranchLengthsTransFun(x, phyloBranchLengthsTransFunTuningPara = MCMCcontrol$phyloBranchLengthsTransFunTuningPara, propToModify = MCMCcontrol$propPhyloBranchesToModify)),
+    Lambda = list(
+      logPriorFun = .coalescenceRatesLogPriorFun,
+      transFun = function(x) .coalescenceRatesTransFun(x, sd = MCMCcontrol$coalRateKernelSD)))
   nodeNumbers <- (ape::Ntip(startingTree) + 1):(length(startingTree$edge.length) + 1)
   nodeTimesLogPriorAndTransFunList <- lapply(nodeNumbers, function(nodeNumber) {
     list(
@@ -292,40 +293,44 @@ phylo <- function(edge, edge.length, tip.label, node.label = NULL) {
   })
   timeNames <- paste("t", nodeNumbers, sep = "")
   names(nodeTimesLogPriorAndTransFunList) <- timeNames
-  logPriorAndTransFunTopology <- list(
-    topology = list(
-    logPriorFun = function(x) {
-      .topologyLogPriorFun(phyloAndTransTree = x, numMigrationsPoissonPriorMean = control$numMigrationsPoissonPriorMean, estRootTime = estRootTime, control = control)
-    },
-    transFun = .topologyTransFun))
+  logPriorAndTransFunList <- c(basicLogPriorAndTransFunList, nodeTimesLogPriorAndTransFunList[nodeOrder - ape::Ntip(startingTree)]) # Topology is processed last since it might change the order in which parameters must be updated (conditioning for node time priors is with respect to children node times).
+  if (MCMCcontrol$topologyTransition) {
+    logPriorAndTransFunTopology <- list(
+      topology = list(
+        logPriorFun = function(x) {
+          .topologyLogPriorFun(phyloAndTransTree = x, numMigrationsPoissonPriorMean = control$numMigrationsPoissonPriorMean, estRootTime = estRootTime, control = control)
+        },
+        transFun = .topologyTransFun))
 
-  logPriorAndTransFunList <- c(basicLogPriorAndTransFunList, nodeTimesLogPriorAndTransFunList[nodeOrder - ape::Ntip(startingTree)], logPriorAndTransFunTopology) # Topology is processed last since it might change the order in which parameters must be updated (conditioning for node time priors is with respect to children node times).
-
+    logPriorAndTransFunList <- c(logPriorAndTransFunList, logPriorAndTransFunTopology) # Topology is processed last since it might change the order in which parameters must be updated (conditioning for node time priors is with respect to children node times).
+  }
   if (length(filesToRestore) == 0) { # New chains...
-    logPriorValue <- sapply(names(logPriorAndTransFunList), FUN = function(paraName) logPriorAndTransFunList[[paraName]]$logPriorFun(currentState[[1]]$phyloAndTransTree))
+    logPriorValue <- sapply(names(logPriorAndTransFunList), FUN = function(paraName) logPriorAndTransFunList[[paraName]]$logPriorFun(startingState[[1]]$phyloAndTransTree))
     names(logPriorValue) <- names(logPriorAndTransFunList)
-    currentState <- lapply(1:MCMCcontrol$nChains, function(chainNum) {
-      currentStateMember <- currentState[[chainNum]]
-      currentStateMember$logPrior <- logPriorValue
-      currentStateMember$logPP <- (startLogLikValue + sum(currentStateMember$logPrior)) * (1/MCMCcontrol$temperatureParFun(chainNum))
-      currentStateMember
+    startingState <- lapply(1:MCMCcontrol$nChains, function(chainNum) {
+      startingStateMember <- startingState[[chainNum]]
+      startingStateMember$logPrior <- logPriorValue
+      startingStateMember$logPP <- (startLogLikValue + sum(startingStateMember$logPrior)) * (1/MCMCcontrol$temperatureParFun(chainNum))
+      startingStateMember
     })
   }
   cat("Chain is called ", chainId, ". Specify this string in MCMC.control if you want to resume simulations.\n", sep = "")
   cat("Starting values for log-priors: \n")
-  print(currentState[[1]]$logPrior) # "1" is the cold chain
+  print(startingState[[1]]$logPrior) # "1" is the cold chain
   cat("Starting value for log-lik.: \n")
-  print(currentState[[1]]$logLik) # "1" is the cold chain
+  print(startingState[[1]]$logLik) # "1" is the cold chain
   cat("Starting value for log-PP: \n")
-  print(currentState[[1]]$logLik + sum(currentState[[1]]$logPrior))
+  print(startingState[[1]]$logLik + sum(startingState[[1]]$logPrior))
+  clusterAddress <- NULL
   if (MCMCcontrol$nChains > 1) {
     clusterAddress <- parallel::makeForkCluster(nnodes = MCMCcontrol$nChains)
   }
   totalNumSweeps <- ceiling((MCMCcontrol$n + MCMCcontrol$burnin)/MCMCcontrol$nIterPerSweep)
   sweepFun <- function(sweepNum) {
-    chainFun <- function(chainNumber) {
-      chainState <- currentState[[chainNumber]]
-      # for (MCMCiter in 1:(MCMCcontrol$n + MCMCcontrol$burnin)) {
+    chainFun <- function(chainNumber = 1) {
+      stateContainer <- vector(mode = "list", length = ceiling(MCMCcontrol$nIterPerSweep/MCMCcontrol$stepSize))
+      chainState <- startingState[[chainNumber]]
+      if (length(MCMCcontainer[[1]]) > 0) chainState <- MCMCcontainer[[tail(which(sapply(MCMCcontainer, length) > 0), n = 1)]][[chainNumber]]
       for (MCMCiter in 1:MCMCcontrol$nIterPerSweep) {
         for (paraName in names(logPriorAndTransFunList)) {
           proposalValueAndTransKernRatio <- logPriorAndTransFunList[[paraName]]$transFun(chainState$phyloAndTransTree)
@@ -335,7 +340,7 @@ phylo <- function(edge, edge.length, tip.label, node.label = NULL) {
           if (paraName %in% c("topology", "b")) {
             updatedLogLik <- logLikFun(.convertToPhylo(updatedDualTree), phyDatData, evoParsList)
           }
-          updatedLogPrior <- .updateLogPrior(updatedDualTree, chainState$phyloAndTransTree, chainState$logPrior, paraName = paraName, timeNames = timeNames, logPriorAndTransFunList = logPriorAndTransFunList)
+          updatedLogPrior <- .updateLogPrior(updatedDualTree, chainState$phyloAndTransTree, chainState$logPrior, paraName = paraName, timeNames = timeNames, logPriorAndTransFunList = logPriorAndTransFunList, control = control)
 
           proposalLogPP <- (updatedLogLik + sum(updatedLogPrior)) * 1/MCMCcontrol$temperatureParFun(chainNumber)
           exponentValue <- proposalLogPP - chainState$logPP
@@ -343,6 +348,11 @@ phylo <- function(edge, edge.length, tip.label, node.label = NULL) {
           # cat("Para.:", paraName, "\n", sep = " ")
           # cat("transKernRatio:", proposalValueAndTransKernRatio$transKernRatio, "exponent:", exponentValue, "proposal LogPP:", proposalLogPP, "current LogPP:", chainState$logPP, "\n", sep = " ")
           if (runif(1) <= MHratio) {
+            # cat("Jump accepted:", paraName, "\n")
+            # cat("Ratio:", MHratio, "\n")
+            # cat("Original PP:", chainState$logPP, "\n")
+            # cat("New log-PP:", proposalLogPP, "\n")
+            # browser()
             chainState$phyloAndTransTree <- updatedDualTree
             chainState$logLik <- updatedLogLik
             chainState$logPrior <- updatedLogPrior
@@ -357,60 +367,80 @@ phylo <- function(edge, edge.length, tip.label, node.label = NULL) {
             }
           }
         }
-
-        # cat("End iter. Current log-PP:", chainState$logPP, "\n", sep = " ")
+        if ((MCMCiter %% MCMCcontrol$stepSize) == 0) {
+          stateContainer[[MCMCiter/MCMCcontrol$stepSize]] <- chainState
+        }
       }
-      chainState
+      stateContainer
     }
     if (MCMCcontrol$nChains > 1) {
-      currentState <<- parallel::parLapply(X = 1:MCMCcontrol$nChains, cl = clusterAddress, fun = chainFun)
+      sweepResultPerChain <- parallel::parLapply(X = 1:MCMCcontrol$nChains, cl = clusterAddress, fun = chainFun)
+      # sweepResultPerChain <- lapply(1:MCMCcontrol$nChains, FUN = chainFun) # For testing...
+    } else {
+      sweepResultPerChain <- list(chainFun())
+    }
+
+    if (MCMCcontrol$nChains > 1) {
       # Processing exchanges between chains...
       # Based on https://www.cs.ubc.ca/~nando/540b-2011/projects/8.pdf
       for (k in 1:(MCMCcontrol$nChains - 1)) {
-        logExpr <- MCMCcontrol$temperatureParFun(k + 1)/MCMCcontrol$temperatureParFun(k) * currentState[[k + 1]]$logPP + MCMCcontrol$temperatureParFun(k)/MCMCcontrol$temperatureParFun(k + 1) * currentState[[k]]$logPP - (currentState[[k]]$logPP + currentState[[k + 1]]$logPP)
+        logExpr <- MCMCcontrol$temperatureParFun(k + 1)/MCMCcontrol$temperatureParFun(k) * tail(sweepResultPerChain[[k + 1]], n = 1)[[1]]$logPP + MCMCcontrol$temperatureParFun(k)/MCMCcontrol$temperatureParFun(k + 1) * tail(sweepResultPerChain[[k]], n = 1)[[1]]$logPP - (tail(sweepResultPerChain[[k]], n = 1)[[1]]$logPP + tail(sweepResultPerChain[[k + 1]], n = 1)[[1]]$logPP)
         swapRatio <- exp(logExpr)
         cat("Swap ratio:", swapRatio, "\n")
         if (runif(1) < swapRatio) {
           cat("Swapping chains", k, "and", k + 1, "\n")
-          currentState[c(k, k + 1)] <- currentState[c(k + 1, k)]
-          currentState[[k]]$logPP <- currentState[[k]]$logPP * MCMCcontrol$temperatureParFun(k + 1)/MCMCcontrol$temperatureParFun(k)
-          currentState[[k + 1]]$logPP <- currentState[[k + 1]]$logPP * MCMCcontrol$temperatureParFun(k)/MCMCcontrol$temperatureParFun(k + 1)
+          sweepResultPerChain[c(k, k + 1)] <- sweepResultPerChain[c(k + 1, k)]
+          sweepResultPerChain[[k]]$logPP <- sweepResultPerChain[[k]]$logPP * MCMCcontrol$temperatureParFun(k + 1)/MCMCcontrol$temperatureParFun(k)
+          sweepResultPerChain[[k]] <- lapply(seq_along(sweepResultPerChain[[k]]), function(index) {
+            sweepResultPerChain[[k]][[index]]$logPP <- sweepResultPerChain[[k]][[index]]$logPP * MCMCcontrol$temperatureParFun(k + 1)/MCMCcontrol$temperatureParFun(k)
+            sweepResultPerChain[[k]][[index]]
+          })
+
+          sweepResultPerChain[[k + 1]] <- lapply(seq_along(sweepResultPerChain[[k + 1]]), function(index) {
+            sweepResultPerChain[[k + 1]][[index]]$logPP <- sweepResultPerChain[[k + 1]][[index]]$logPP * MCMCcontrol$temperatureParFun(k)/MCMCcontrol$temperatureParFun(k + 1)
+            sweepResultPerChain[[k + 1]][[index]]
+          })
         }
       }
-    } else {
-      currentState <<- lapply(X = 1:MCMCcontrol$nChains, FUN = chainFun)
     }
+
     cat("Processed MCMC iteration ", sweepNum * MCMCcontrol$nIterPerSweep, ".\n", sep = "")
-    cat("\n\n\n Current log-lik.:", currentState[[1]]$logLik, "\n")
-    cat("Current log-PP:", currentState[[1]]$logPP, "\n")
+    cat("\n\n\n Current log-lik.:", tail(sweepResultPerChain[[1]], n = 1)[[1]]$logLik, "\n")
+    cat("Current log-PP:", tail(sweepResultPerChain[[1]], n = 1)[[1]]$logPP, "\n")
     cat("Current log-priors: \n")
-    nodeTimesPriorSum <- sum(currentState[[1]]$logPrior[timeNames])
-    print(c(currentState[[1]]$logPrior[c("topology", "b")], nodeTimes = nodeTimesPriorSum))
+    nodeTimesPriorSum <- sum(tail(sweepResultPerChain[[1]], n = 1)[[1]]$logPrior[timeNames])
+    print(c(tail(sweepResultPerChain[[1]], n = 1)[[1]]$logPrior[c("topology", "b")], nodeTimes = nodeTimesPriorSum))
     cat("\n\n")
-    # if ((MCMCiter %% MCMCcontrol$stepSize) == 0) {
-    MCMCcontainer[[sweepNum]] <<- currentState
+    reformattedSweepResult <- lapply(1:ceiling(MCMCcontrol$nIterPerSweep/MCMCcontrol$stepSize), function(iterNumber) {
+      lapply(1:length(sweepResultPerChain), function(chainNumber) {
+        sweepResultPerChain[[chainNumber]][[iterNumber]]
+      })
+    })
+    elementNums <- (sweepNum - 1) * ceiling(MCMCcontrol$nIterPerSweep/MCMCcontrol$stepSize) + 1:ceiling(MCMCcontrol$nIterPerSweep/MCMCcontrol$stepSize)
+    MCMCcontainer[elementNums] <<- reformattedSweepResult
     if (!is.null(MCMCcontrol$folderToSaveIntermediateResults)) {
-      MCMCiter <- sweepNum * MCMCcontrol$nIterPerSweep
-      save(currentState, file = paste(MCMCcontrol$folderToSaveIntermediateResults, "/chainID_", chainId, "_atIter", MCMCiter, ".Rdata", sep = ""), compress = TRUE)
+      lapply(elementNums, function(elementNum) {
+        currentState <- MCMCcontainer[[elementNum]]
+        save(currentState, file = paste(MCMCcontrol$folderToSaveIntermediateResults, "/chainID_", chainId, "_atIter", elementNum * MCMCcontrol$stepSize, ".Rdata", sep = ""), compress = TRUE)
+      })
     }
-    # }
   }
   currentSweep <- (startIterNum - 1)/MCMCcontrol$nIterPerSweep + 1
   lapply(currentSweep:totalNumSweeps, FUN = sweepFun)
   cat("MCMC complete. Finalising... \n")
-  lastIterToDrop <- floor(MCMCcontrol$burnin/MCMCcontrol$nIterPerSweep)
+  lastIterToDrop <- floor(MCMCcontrol$burnin/MCMCcontrol$stepSize)
   elementsToDrop <- 0
   if (lastIterToDrop > 0) {
     elementsToDrop <- 1:lastIterToDrop
   }
-
-  # elementsToKeep <- seq(
-  #   from = floor(MCMCcontrol$burnin/MCMCcontrol$stepSize) + 1,
-  #   to = floor((MCMCcontrol$burnin + MCMCcontrol$n)/MCMCcontrol$stepSize))
-  lapply(MCMCcontainer[-elementsToDrop], '[[', 1) # We only keep the cold chain.
+  outputResults <- lapply(MCMCcontainer[-elementsToDrop], '[[', 1) # We only keep the cold chain.
+  if (MCMCcontrol$nChains > 1) {
+    parallel::stopCluster(clusterAddress)
+  }
+  outputResults
 }
 
-.updateLogPrior <- function(updatedDualTree, originalDualTree, previousLogPriorValues, paraName, timeNames, logPriorAndTransFunList) {
+.updateLogPrior <- function(updatedDualTree, originalDualTree, previousLogPriorValues, paraName, timeNames, logPriorAndTransFunList, control) {
   updatedLogPrior <- previousLogPriorValues
   updatedLogPrior[[paraName]] <- logPriorAndTransFunList[[paraName]]$logPriorFun(updatedDualTree)
   if (paraName == "b") {
@@ -427,7 +457,7 @@ phylo <- function(edge, edge.length, tip.label, node.label = NULL) {
       parentMatchIndex <- grep(x = timeNames, pattern = parentNum)
       updatedLogPrior[[parentMatchIndex]] <- logPriorAndTransFunList[[parentMatchIndex]]$logPriorFun(updatedDualTree)
     }
-  } else if (paraName == "Lambda") {
+  } else if (paraName == "Lambda" & control$MCMC.control$topologyTransition) {
     updatedLogPrior[["topology"]] <- logPriorAndTransFunList[["topology"]]$logPriorFun(updatedDualTree)
   } else if (paraName == "topology") {
     # Actually, a change in the topology does not change the number of branches or their lengths, and so, the sum of the priors for node times should not be affected, although their names will change.
@@ -446,7 +476,7 @@ phylo <- function(edge, edge.length, tip.label, node.label = NULL) {
 #' @param chainId glyph program previously assigned a chain, used to resume a chain, can be found in the printed output of findBayesianClusters after "Launching MCMC..."
 #' @param coalRateKernelSD tuning parameter for the Gaussian coalescence rates transition kernel
 #' @param print.frequency number indicating at which interval the program prints information on the chain
-#' @param phyloBranchLengthsLogTransKernSD number between 0 and 1, tuning parameter for the phylogenetic branch lengths transition kernel, a lower value translates to larger variations, and a lower acceptance rate in the chain
+#' @param phyloBranchLengthsTransFunTuningPara number between 0 and 1, tuning parameter for the phylogenetic branch lengths transition kernel, a lower value translates to larger variations, and a lower acceptance rate in the chain
 #' @param propPhyloBranchesToModify number between 0 and 1, proportion of branches that are modified by the transition kernel every iteration
 #' @param transTreeTuningPara tuning parameter for the transmission tree transition kernel, determines the boundaries of the uniform density used to propose new branch lengths in the transmission tree; a higher value leads to larger steps, and a lower acceptance rate
 #' @param transTreeBranchLengthsPriorMVratio priors for branch lengths in the transmission tree are gamma-distributed with this shape parameter; at the default value (1), the distribution is exponential
@@ -457,14 +487,14 @@ phylo <- function(edge, edge.length, tip.label, node.label = NULL) {
 #'  MCMC.control(n = 1e6, stepSize = 100, burnin = 1e5)
 #' }
 #' @export
-MCMC.control <- function(n = 2e5, nIterPerSweep = 100, nChains = 1, temperatureParFun = function(x) x, stepSize = 50, burnin = 1e4, folderToSaveIntermediateResults = NULL, chainId = NULL, coalRateKernelSD = 0.5, print.frequency = 10, phyloBranchLengthsLogTransKernSD = log(1.05), propPhyloBranchesToModify = 0.1, transTreeTuningPara = 0.99, rootTransitionPar = 15, transTreeBranchLengthsPriorMVratio = 1.1, logClockRatesPriorSD = log(1.1), logClockRatesKernelSD = 1, rootTimePriorSD = 7) { # transTreeBranchLengthsPriorMVratio must be greater than 1 for the initial optimisation of branch lengths in the transmission tree to work.
+MCMC.control <- function(n = 2e5, nIterPerSweep = 100, nChains = 1, temperatureParFun = function(x) x, stepSize = 50, burnin = 1e4, folderToSaveIntermediateResults = NULL, chainId = NULL, coalRateKernelSD = 0.5, print.frequency = 10, phyloBranchLengthsTransFunTuningPara = 0.5, propPhyloBranchesToModify = 0.1, transTreeTuningPara = 0.99, rootTransitionPar = 15, logClockRatesPriorSD = log(5), rootTimePriorSD = 7, topologyTransition = TRUE) {
   if (temperatureParFun(1) != 1) {
     stop("temperatureParFun(1) must return '1' as it is for the cold chain! Please fix this (or leave the default value) and re-run the code. \n")
   }
   if (nChains == 1) {
     nIterPerSweep <- stepSize
   }
-  list(n = n, nIterPerSweep = nIterPerSweep, nChains = nChains, temperatureParFun = temperatureParFun, stepSize = stepSize, burnin = burnin, folderToSaveIntermediateResults = folderToSaveIntermediateResults, chainId = chainId, coalRateKernelSD = coalRateKernelSD, print.frequency = print.frequency, phyloBranchLengthsLogTransKernSD = phyloBranchLengthsLogTransKernSD, propPhyloBranchesToModify = propPhyloBranchesToModify, transTreeTuningPara = transTreeTuningPara, rootTransitionPar = rootTransitionPar, transTreeBranchLengthsPriorMVratio = transTreeBranchLengthsPriorMVratio, logClockRatesKernelSD = logClockRatesKernelSD, logClockRatesPriorSD = logClockRatesPriorSD, rootTimePriorSD = rootTimePriorSD)
+  list(n = n, nIterPerSweep = nIterPerSweep, nChains = nChains, temperatureParFun = temperatureParFun, stepSize = stepSize, burnin = burnin, folderToSaveIntermediateResults = folderToSaveIntermediateResults, chainId = chainId, coalRateKernelSD = coalRateKernelSD, print.frequency = print.frequency, phyloBranchLengthsTransFunTuningPara = phyloBranchLengthsTransFunTuningPara, propPhyloBranchesToModify = propPhyloBranchesToModify, transTreeTuningPara = transTreeTuningPara, rootTransitionPar = rootTransitionPar, rootTimePriorSD = rootTimePriorSD, logClockRatesPriorSD = logClockRatesPriorSD, topologyTransition = topologyTransition)
 }
 
 .topologyTransFun <- function(phyloAndTransTree) {
@@ -621,17 +651,20 @@ MCMC.control <- function(n = 2e5, nIterPerSweep = 100, nChains = 1, temperatureP
 # Internal branches of length 0 would produce a multifurcation, so should not be found.
 
 .phyloBranchLengthsLogPriorFun <- function(phyloAndTransTree, extBranchLengthPriorMean, extBranchLengthPriorSD) {
-    branchLengths <- sapply(phyloAndTransTree$edge.length, "[[", "phylogeny")
-    externalEdges <- which(phyloAndTransTree$edge[ , 2] <= ape::Ntip(phyloAndTransTree))
-    logNormPars <- getLogNormMMpars(meanValue = extBranchLengthPriorMean, varValue = extBranchLengthPriorSD^2)
-    sum(dlnorm(branchLengths[externalEdges], meanlog = logNormPars$mu, sdlog = logNormPars$sigma, log = TRUE))
+    # branchLengths <- sapply(phyloAndTransTree$edge.length, "[[", "phylogeny")
+    # externalEdges <- which(phyloAndTransTree$edge[ , 2] <= ape::Ntip(phyloAndTransTree))
+    # logNormPars <- getLogNormMMpars(meanValue = extBranchLengthPriorMean, varValue = extBranchLengthPriorSD^2)
+    # sum(dlnorm(branchLengths[externalEdges], meanlog = logNormPars$mu, sdlog = logNormPars$sigma, log = TRUE))
+    # logMean <- log(extBranchLengthPriorMean)
+    # sum(dnorm(log(branchLengths[externalEdges]), mean = logMean, sd = log(5), log = TRUE))
+  return(0)
 }
 
 # The mode of the displaced log-normal kernel is set at current branch lengths.
 # It is then enough to pick a value for sigma, the variance of the random variable expressed on the log-scale, to get a suitable value for mu.
 # A better setup might involve working on the logarithmic scale and simulating normal numbers, making the transition kernel symmetric.
 
-.phyloBranchLengthsTransFun <- function(phyloAndTransTree, logTransKernSD = 0.5, propToModify = 0.1) {
+.phyloBranchLengthsTransFun <- function(phyloAndTransTree, phyloBranchLengthsTransFunTuningPara = 0.5, propToModify = 0.1) {
   branchLengths <- sapply(phyloAndTransTree$edge.length, FUN = '[[', "phylogeny")
   numToModify <- 1
   if (propToModify > 0) {
@@ -640,8 +673,8 @@ MCMC.control <- function(n = 2e5, nIterPerSweep = 100, nChains = 1, temperatureP
   branchesToModify <- sample.int(n = length(branchLengths), size = numToModify, replace = FALSE)
   previousLengths <- branchLengths[branchesToModify]
   # logScaleMean <- log(previousLengths)
-  # newLengths <- exp(rnorm(n = length(logScaleMean), mean = logScaleMean, sd = logTransKernSD))
-  multipliers <- runif(length(previousLengths), min = 1 - logTransKernSD, max = 1 + logTransKernSD)
+  # newLengths <- exp(rnorm(n = length(logScaleMean), mean = logScaleMean, sd = phyloBranchLengthsTransFunTuningPara))
+  multipliers <- runif(length(previousLengths), min = 1 - phyloBranchLengthsTransFunTuningPara, max = 1 + phyloBranchLengthsTransFunTuningPara)
   newLengths <- multipliers * previousLengths
   for (i in seq_along(branchesToModify)) {
     phyloAndTransTree$edge.length[[branchesToModify[[i]]]]$phylogeny <- newLengths[[i]]
@@ -979,42 +1012,6 @@ prune.tree <- function(phylogeny, node) {
   dnorm(x = x, mean = meanValue, sd = sd, log = TRUE)
 }
 
-# We pick a log-normal prior on the original scale because we would like the prior on the log-scale to be normal.
-.logClockRatesLogPrior <- function(phyloAndTransTree, logClockRatePriorMean, stdDev, strict = FALSE) {
-  x <- phyloAndTransTree$edge.length[[1]]$logXi
-  if (!strict) {
-    x <- sapply(phyloAndTransTree$edge.length, "[[", "logXi")
-  }
-  sum(dnorm(x = x, mean = logClockRatePriorMean, sd = stdDev, log = TRUE))
-}
-
-.logClockRatesTransFun <- function(phyloAndTransTree, propToModify = 0.01, logKernelSD = 1, strict = FALSE) {
-  if (!strict) {
-    numToModify <- ceiling(propToModify * length(phyloAndTransTree$edge.length))
-    posToModify <- sort(sample.int(n = length(phyloAndTransTree$edge.length), size = numToModify, replace = FALSE))
-
-    newEdgeLengths <- lapply(seq_along(phyloAndTransTree$edge.length), function(posIndex) {
-      returnValue <- phyloAndTransTree$edge.length[[posIndex]]
-      if (posIndex %in% posToModify) {
-        returnValue <- phyloAndTransTree$edge.length[[posIndex]]
-        currentLogXi <- returnValue$logXi
-        returnValue$logXi <- rnorm(n = 1, mean = currentLogXi, sd = logKernelSD)
-      }
-      returnValue
-    })
-  } else {
-    currentLogXi <- phyloAndTransTree$edge.length[[1]]$logXi
-    newLogXi <-  rnorm(n = 1, mean = currentLogXi, sd = logKernelSD)
-    newEdgeLengths <- lapply(seq_along(phyloAndTransTree$edge.length), function(posIndex) {
-      returnValue <- phyloAndTransTree$edge.length[[posIndex]]
-      returnValue$logXi <- newLogXi
-      returnValue
-    })
-  }
-  phyloAndTransTree$edge.length <- newEdgeLengths
-  list(value = phyloAndTransTree, transKernRatio = 1)
-}
-
 getTransTreeEdgeLengths <- function(phyloAndTransTree) {
   sapply(phyloAndTransTree$edge.length, "[[", "transmissionTree")
 }
@@ -1268,9 +1265,7 @@ dist.tips.root.phylo <- function(phylogeny, tips) {
   phyloAndTransTree <- .identifyNodeRegions(phyloAndTransTree)
   # Initialises transmission tree branch lengths conditional on phylogenetic branch lengths and an equal clock rate across branches
   phyloAndTransTree <- .initialiseTree(phyloAndTransTree, timestampsInDays, regionStamps, startLogClockRate = logClockRatePriorMean, estRootTime, control)
-
-  # Improves transmission tree branch lengths conditional on phylogenetic branch lengths and an equal clock rate across branches
-  # phyloAndTransTree <- .refineTimeEstimates(phyloAndTransTree = phyloAndTransTree, estRootTime = estRootTime, logClockRatePriorMean = logClockRatePriorMean, control = control)
+  phyloAndTransTree <- .refineTimeEstimates(phyloAndTransTree = phyloAndTransTree, estRootTime = estRootTime, logClockRatePriorMean = logClockRatePriorMean, control = control)
   phyloAndTransTree$Lambda <- .genStartCoalescenceRates(phyloAndTransTree, estRootTime = estRootTime, control = control)
   phyloAndTransTree
 }
@@ -1322,59 +1317,71 @@ dist.tips.root.phylo <- function(phylogeny, tips) {
   nodeChildrenParentParsList <- lapply(seq_along(phyloAndTransTree$node.label), function(nodeIndex) {
     nodeLabel <- nodeIndex + ape::Ntip(phyloAndTransTree)
     parentNum <- NA
-    supportBranchLength <- NA
+    supportPhyloBranchLength <- NA
     supportEdgeNum <- NA
     if (nodeLabel > ape::Ntip(phyloAndTransTree) + 1) {
       parentNum <- phangorn::Ancestors(phyloAndTransTree, nodeLabel, "parent")
       supportEdgeNum <- match(nodeLabel, phyloAndTransTree$edge[ , 2])
-      supportBranchLogXi <- phyloAndTransTree$edge.length[[supportEdgeNum]]$logXi
+      supportPhyloBranchLength <- phyloAndTransTree$edge.length[[supportEdgeNum]]$phylogeny
     }
 
     childrenNums <- phangorn::Children(phyloAndTransTree, nodeLabel)
-    childrenBranchesLogXis <- sapply(childrenNums, function(vertexNum) {
+    childrenPhyloBranchLengths <- sapply(childrenNums, function(vertexNum) {
       matchValue <- match(vertexNum,  phyloAndTransTree$edge[ , 2])
-      phyloAndTransTree$edge.length[[matchValue]]$logXi
+      phyloAndTransTree$edge.length[[matchValue]]$phylogeny
     })
     childrenEdgeNums <- match(childrenNums, phyloAndTransTree$edge[ , 2])
-    list(parent = parentNum, supportEdgeNum = supportEdgeNum, children = childrenNums, supportBranchLogXi = supportBranchLogXi, childrenBranchesLogXis = childrenBranchesLogXis, childrenEdgeNums = childrenEdgeNums)
+    list(parent = parentNum, supportEdgeNum = supportEdgeNum, children = childrenNums, supportPhyloBranchLength = supportPhyloBranchLength, childrenPhyloBranchLengths = childrenPhyloBranchLengths, childrenEdgeNums = childrenEdgeNums)
   })
-  envForPhyloAndTransTree <- new.env()
-  assign("phyloAndTransTree", value = phyloAndTransTree, envir = envForPhyloAndTransTree)
-  for (nodeIndex in seq_along(phyloAndTransTree$node.label)) {
-    nodeInfoList <- nodeChildrenParentParsList[[nodeIndex]]
-    childrenNodes <- nodeInfoList$children
-    childrenTimes <- sapply(childrenNodes, function(childIndex) .getVertexLabel(phylogeny = phyloAndTransTree, vertexNum = childIndex)$time)
-    parentTime <- -Inf
-    if (nodeIndex != 1) {
-      parentTime <- .getVertexLabel(phylogeny = phyloAndTransTree, vertexNum = nodeInfoList$parent)$time
-    }
-    objectiveFunForOptim <- function(timePoint, envForPhyloAndTransTree) {
-      phyloAndTransTree <- envForPhyloAndTransTree$phyloAndTransTree
-      phyloAndTransTree$node.label[[nodeIndex]]$time <- timePoint
-      for (childNodeIndex in seq_along(nodeInfoList$childrenEdgeNums)) {
-        numerator <- phyloAndTransTree$edge.length[[nodeInfoList$childrenEdgeNums[[childNodeIndex]]]]$phylogeny
-        denominator <- .getVertexLabel(phyloAndTransTree, nodeInfoList$children[[childNodeIndex]])$time - timePoint
-        newLogXi <- log(numerator) - log(denominator)
-        phyloAndTransTree$edge.length[[nodeInfoList$childrenEdgeNums[[childNodeIndex]]]]$transmissionTree <- denominator
-        phyloAndTransTree$edge.length[[nodeInfoList$childrenEdgeNums[[childNodeIndex]]]]$logXi <- newLogXi
-      }
 
+  currentLogPrior <- sum(sapply(1:ape::Nnode(phyloAndTransTree) + ape::Ntip(phyloAndTransTree), .nodeTimeConditionalLogPrior, phyloAndTransTree = phyloAndTransTree, meanLogClockRate = logClockRatePriorMean, control = control))
+  repeat {
+    for (nodeIndex in 2:length(phyloAndTransTree$node.label)) {
+      nodeInfoList <- nodeChildrenParentParsList[[nodeIndex]]
+      childrenNodes <- nodeInfoList$children
+      childrenTimes <- sapply(childrenNodes, function(childIndex) .getVertexLabel(phylogeny = phyloAndTransTree, vertexNum = childIndex)$time)
+      childrenPhyloLengths <- phyloLengths <- nodeChildrenParentParsList[[nodeIndex]]$childrenPhyloBranchLength
+      parentTime <- estRootTime - 365 # One year before the estimated root time.
+      parentPhyloLength <- NA
       if (nodeIndex > 1) {
-        numerator <- phyloAndTransTree$edge.length[[nodeInfoList$supportEdgeNum]]$phylogeny
-        denominator <- timePoint - .getVertexLabel(phyloAndTransTree, nodeInfoList$parent)$time
-        newLogXi <- log(numerator) - log(denominator)
-        phyloAndTransTree$edge.length[[nodeInfoList$supportEdgeNum]]$logXi <- newLogXi
-        phyloAndTransTree$edge.length[[nodeInfoList$supportEdgeNum]]$transmissionTree <- denominator
+        parentTime <- .getVertexLabel(phylogeny = phyloAndTransTree, vertexNum = nodeInfoList$parent)$time
+        parentPhyloLength <- nodeChildrenParentParsList[[nodeIndex]]$supportPhyloBranchLength
+        phyloLengths <- c(phyloLengths, parentPhyloLength)
       }
-      envForPhyloAndTransTree$phyloAndTransTree <- phyloAndTransTree
-      objective <- -1 * (sapply(ape::Ntip(phyloAndTransTree):length(phyloAndTransTree$edge.length) + 1, FUN = .nodeTimeConditionalLogPrior, phyloAndTransTree = phyloAndTransTree, meanLogClockRate = logClockRatePriorMean, control = control) + .rootTimeLogPriorFun(phyloAndTransTree$node.label[[1]]$time, meanValue = estRootTime, sd = control$MCMC.control$rootTimePriorSD))
-      objective
+      objectiveFunForOptim <- function(timePoint) {
+        newLengths <- childrenTimes - timePoint
+        if (nodeIndex > 1) {
+          parentLength <- timePoint - parentTime
+          newLengths <- c(newLengths, parentLength)
+        }
+        newLogXis <- log(phyloLengths) - log(newLengths)
+        objective <- sum(sapply(newLogXis, .logXiLogPriorFun, mean = logClockRatePriorMean, std = control$MCMC.control$logClockRatesPriorSD))
+        if (nodeIndex == 1) {
+          objective <- objective + .rootTimeLogPriorFun(timePoint, meanValue = estRootTime, sd = control$MCMC.control$rootTimePriorSD)
+        }
+        -objective
+      }
+      currentTime <- .getVertexLabel(phyloAndTransTree, nodeIndex + ape::Ntip(phyloAndTransTree))$time
+      optimResult <- nloptr::lbfgs(x0 = currentTime, fn = objectiveFunForOptim, lower = parentTime + 1/86400, upper = min(childrenTimes) - 1/86400, control = list(xtol_rel = 1e-6))
+      phyloAndTransTree$node.label[[nodeIndex]]$time <- optimResult$par
+      for (childEdgeIndex in seq_along(nodeChildrenParentParsList[[nodeIndex]]$childrenEdgeNums)) {
+        childEdgeNum <- nodeChildrenParentParsList[[nodeIndex]]$childrenEdgeNums[[childEdgeIndex]]
+        phyloAndTransTree$edge.length[[childEdgeNum]]$transmissionTree <- childrenTimes[[childEdgeIndex]] - optimResult$par
+        phyloAndTransTree$edge.length[[childEdgeNum]]$logXi <-  log(childrenPhyloLengths[[childEdgeIndex]]) - log(phyloAndTransTree$edge.length[[childEdgeNum]]$transmissionTree)
+      }
+      if (nodeIndex > 1) {
+        parentEdgeNum <- nodeChildrenParentParsList[[nodeIndex]]$supportEdgeNum
+        phyloAndTransTree$edge.length[[parentEdgeNum]]$transmissionTree <- optimResult$par - parentTime
+        phyloAndTransTree$edge.length[[parentEdgeNum]]$logXi <- log(parentPhyloLength) - log(phyloAndTransTree$edge.length[[parentEdgeNum]]$transmissionTree)
+      }
     }
-    currentTime <- .getVertexLabel(phyloAndTransTree, nodeIndex + ape::Ntip(phyloAndTransTree))$time
-    nloptr::lbfgs(x0 = currentTime, fn = objectiveFunForOptim, lower = parentTime, upper = min(childrenTimes), envForPhyloAndTransTree = envForPhyloAndTransTree, control = list(xtol_rel = 1e-4))
+    newLogPrior <- sum(sapply(1:ape::Nnode(phyloAndTransTree) + ape::Ntip(phyloAndTransTree), .nodeTimeConditionalLogPrior, phyloAndTransTree = phyloAndTransTree, meanLogClockRate = logClockRatePriorMean, control = control))
+    if ((improvementRatio <- abs((newLogPrior - currentLogPrior)/currentLogPrior)) < 1e-8) break
+    cat("Improvement ratio:", improvementRatio, "\n")
+    currentLogPrior <- newLogPrior
   }
   cat("Done!")
-  envForPhyloAndTransTree$phyloAndTransTree
+  phyloAndTransTree
 }
 
 getLogNormMMpars <- function(meanValue, varValue) {
@@ -1526,4 +1533,20 @@ getLogNormMMpars <- function(meanValue, varValue) {
   treeToReturn <- .clearNodeRegions(treeToReturn)
   treeToReturn <- .identifyNodeRegions(treeToReturn)
   treeToReturn
+}
+
+logPPfromChain <- function(result) {
+  sapply(result$chain, "[[", "logPP")
+}
+
+logLikfromChain <- function(result) {
+  sapply(result$chain, "[[", "logLik")
+}
+
+logPriorsFromChain <- function(result) {
+  sapply(result$chain, function(chainIter) {
+    nodeTimePriors <- stringr::str_detect(names(chainIter$logPrior), pattern = "(?<=[:alpha:])[:digit:]+")
+    nodeTimesPriorsSum <- sum(chainIter$logPrior[nodeTimePriors])
+    c(chainIter$logPrior[!nodeTimePriors], nodeTimes = nodeTimesPriorsSum)
+  })
 }
