@@ -197,7 +197,7 @@ presetPML <- function(phyloObj, phyDatObj, evoParsList) {
   list()
 }
 
-.addCoalescenceRates <- function(phyloAndTransTree, estRootTime, control) {
+.computeCoalRatesAddSubtreeIndex <- function(phyloAndTransTree, estRootTime, control) {
   subtreeRootNodes <- .computeSubtreeRootNums(phyloAndTransTree)
   subtreeRootNodeDepths <- sapply(subtreeRootNodes, function(nodeNum) length(phangorn::Ancestors(phyloAndTransTree, nodeNum, "all")) + 1)
   updateOrder <- order(subtreeRootNodeDepths)
@@ -227,6 +227,7 @@ presetPML <- function(phyloObj, phyDatObj, evoParsList) {
   })
   # LogNormPars <- lapply(rateBySubtree, function(rateValue) computeLogNormMMpars(meanValue = rateValue, varValue = (control$MCMC.control$coalescentPriorCoefVar * rateValue)^2))
   phyloAndTransTree$LambdaList <- lapply(seq_along(rateBySubtree), function(i) list(Lambda = optimLambdas[[i]], rootNodeNum = subtreeRootNodes[[i]], priorMean = rateBySubtree[[i]]))
+
   phyloAndTransTree
 }
 
@@ -276,37 +277,42 @@ phylo <- function(edge, edge.length, tip.label, node.label = NULL) {
   } else {
     cat("Launching MCMC... \n")
   }
-  totalBranchLengthsPhylo <- sum(sapply(startingTree$edge.length, "[[", "phylogeny"))
-  branchLengthsLogPriorAndTransFunList <- list(
-   b = list( # The mean here corresponds to 14 days for the time between the time the sequence is sampled and the time at which the first transmission linking it to another sequence in the sample occurred.
-      # logPriorFun =  function(x) .phyloBranchLengthsLogPriorFun(phyloAndTransTree = x, extBranchLengthPriorMean = perSiteClockRate, extBranchLengthPriorSD = perSiteClockRate * 50), # SHOULD NOT BE HARD-CODED
-     logPriorFun = function(x) .phyloBranchLengthsLogPriorFun(phyloAndTransTree = x, extBranchLengthPriorMean = totalBranchLengthsPhylo, extBranchLengthPriorSD = totalBranchLengthsPhylo/100),
-      transFun = function(x) .phyloBranchLengthsTransFun(x, phyloBranchLengthsTransFunTuningPara = MCMCcontrol$phyloBranchLengthsTransFunTuningPara, propToModify = MCMCcontrol$propPhyloBranchesToModify)))
 
-  coalescenceRatesLogPriorAndTransFunList <-  lapply(seq_along(startingTree$LambdaList), function(i) {
-    list(
-      logPriorFun = function(x) .coalescenceRateLogPriorFun(phyloAndTransTree = x, index = i, control = control),
-      transFun = function(x) .coalescenceRateTransFun(x, index = i, sd = MCMCcontrol$coalRateKernelSD))
-  })
-  names(coalescenceRatesLogPriorAndTransFunList) <- paste("Lambda", seq_along(coalescenceRatesLogPriorAndTransFunList), sep = "")
-
-  nodeTimesLogPriorAndTransFunList <- lapply(seq_along(coalescenceRatesLogPriorAndTransFunList), function(subtreeIndex) list(
-    logPriorFun = function(x) .nodeTimesSubtreeLogPriorFun(phyloAndTransTree = x, subtreeIndex = subtreeIndex, estRootTime = estRootTime, control = control),
-    transFun = function(x) .nodeTimesSubtreeTransFun(phyloAndTransTree = x, subtreeIndex = subtreeIndex, control = control)
-  ))
-  names(nodeTimesLogPriorAndTransFunList) <- paste("nodeTimes", seq_along(coalescenceRatesLogPriorAndTransFunList), sep = "")
-  logPriorAndTransFunList <- c(branchLengthsLogPriorAndTransFunList, coalescenceRatesLogPriorAndTransFunList, nodeTimesLogPriorAndTransFunList)
-  if (MCMCcontrol$topologyTransition) {
-    stop("Topology transitions not implemented yet. Set topologyTransition to FALSE in MCMC.control. \n")
-    # logPriorAndTransFunTopology <- list(
-    #   topology = list(
-    #     logPriorFun = function(x) {
-    #       .topologyLogPriorFun(phyloAndTransTree = x, numMigrationsPoissonPriorMean = control$numMigrationsPoissonPriorMean, estRootTime = estRootTime, control = control)
-    #     },
-    #     transFun = .topologyTransFun))
-    #
-    # logPriorAndTransFunList <- c(logPriorAndTransFunList, logPriorAndTransFunTopology) # Topology is processed last since it might change the order in which parameters must be updated (conditioning for node time priors is with respect to children node times).
+  funToGetTotalBranchLengths <- function(subtreeIndex) {
+    nodeNums <- which(sapply(startingTree$node.label, "[[", "subtreeIndex") == subtreeIndex) + length(startingTree$tip.label)
+    childrenList <- lapply(nodeNums, phangorn::Children, x = startingTree)
+    branchNums <- match(do.call("c", childrenList), startingTree$edge[ , 2])
+    sum(sapply(branchNums, function(branchNum) startingTree$edge.length[[branchNum]]$phylogeny))
   }
+  totalPhyloBranchLengthsBySubtree <- sapply(seq_along(startingTree$LambdaList), funToGetTotalBranchLengths)
+  # branchLengthsLogPriorAndTransFunList <- list(
+  #  b = list( # The mean here corresponds to 14 days for the time between the time the sequence is sampled and the time at which the first transmission linking it to another sequence in the sample occurred.
+  #     # logPriorFun =  function(x) .phyloBranchLengthsLogPriorFun(phyloAndTransTree = x, sumBranchLengthsPriorMean = perSiteClockRate, sumBranchLengthsPriorSD = perSiteClockRate * 50), # SHOULD NOT BE HARD-CODED
+  #    logPriorFun = function(x) .phyloBranchLengthsLogPriorFun(phyloAndTransTree = x, sumBranchLengthsPriorMean = totalBranchLengthsPhylo, sumBranchLengthsPriorSD = totalBranchLengthsPhylo/100),
+  #     transFun = function(x) .phyloBranchLengthsTransFun(x, phyloBranchLengthsTransFunTuningPara = MCMCcontrol$phyloBranchLengthsTransFunTuningPara, propToModify = MCMCcontrol$propPhyloBranchesToModify)))
+
+  # subtreesLogPriorAndTransFunList <- lapply(seq_along(startingTree$LambdaList), function(i) {
+  #   list(
+  #     logPriorFun = function(x) .subtreeLogPriorFun(phyloAndTransTree = x, subtreeIndex = i, estRootTime = estRootTime, subtreePhyloBranchLengthsPriorMean = totalPhyloBranchLengthsBySubtree[[i]], subtreePhyloBranchLengthsPriorSD = totalPhyloBranchLengthsBySubtree[[i]]/5, control = control),
+  #     transFun = function(x) .subtreeTransFun(phyloAndTransTree = x, subtreeIndex = i, control = control))
+  # })
+  # names(subtreesLogPriorAndTransFunList) <- subtreeParaNames <- paste("SubtreeIndex", seq_along(subtreesLogPriorAndTransFunList), sep = "")
+  #
+  # logPriorAndTransFunList <- subtreesLogPriorAndTransFunList
+  # if (MCMCcontrol$topologyTransition) {
+  # logPriorAndTransFunTopology <- list(
+  #   topology = list(
+  #     logPriorFun = .topologyLogPriorFun,
+  #     transFun = function(x) .topologyTransFun(x, control = control)))
+  #
+  # logPriorAndTransFunList <- c(logPriorAndTransFunList, logPriorAndTransFunTopology)
+  # }
+  logPriorAndTransFunList <- list(fullTree = list(
+    logPriorFun = function(x) .fullTreeLogPriorFun(phyloAndTransTree = x, subtreePhyloBranchLengthsPriorMeans = totalPhyloBranchLengthsBySubtree, subtreePhyloBranchLengthsPriorSDs = totalPhyloBranchLengthsBySubtree * control$MCMC.control$phyloBranchLengthsCoefVar, estRootTime = estRootTime, control = control),
+    transFun = function(x) .fullTreeTransFun(phyloAndTransTree = x, control = control)))
+
+  logPriorValue <- sapply(logPriorAndTransFunList, function(listElement) listElement$logPriorFun(startingTree))
+  names(logPriorValue) <- names(logPriorAndTransFunList)
   if (length(filesToRestore) == 0) { # New chains...
     logPriorValue <- sapply(names(logPriorAndTransFunList), FUN = function(paraName) logPriorAndTransFunList[[paraName]]$logPriorFun(startingState[[1]]$phyloAndTransTree))
     names(logPriorValue) <- names(logPriorAndTransFunList)
@@ -340,18 +346,18 @@ phylo <- function(edge, edge.length, tip.label, node.label = NULL) {
           updatedLogPrior <- chainState$logPrior
           updatedDualTree <- proposalValueAndTransKernRatio$value
           updatedLogLik <- chainState$logLik
-          if (paraName %in% c("topology", "b")) {
-            updatedLogLik <- logLikFun(.convertToPhylo(updatedDualTree), phyDatData, evoParsList)
-            if (paraName == "b") {
-              diffBranchNums <- which(getPhyloEdgeLengths(updatedDualTree) != getPhyloEdgeLengths(chainState$phyloAndTransTree))
-              parentNums <- updatedDualTree$edge[diffBranchNums, 1]
-              subtreeNums <- unique(sapply(updatedDualTree$node.label[parentNums - ape::Ntip(updatedDualTree)], "[[", "subtreeIndex"))
-              for (subtreeNum in subtreeNums) updatedDualTree$LambdaList[[subtreeNum]]$priorMean <- .computeMeanCoalRateSubtree(updatedDualTree, subtreeNum)
-            } else {
-              stop("Topology transitions not implemented! \n")
-            }
+          # if (paraName %in% subtreeParaNames) {
+          updatedLogLik <- logLikFun(.convertToPhylo(updatedDualTree), phyDatData, evoParsList)
+          # subtreeNum <- as.numeric(gsub(pattern = "[A-za-z]", x = paraName, replacement = ""))
+          for (subtreeIndex in seq_along(updatedDualTree$LambdaList)) {
+            updatedDualTree$LambdaList[[subtreeIndex]]$priorMean <- .computeMeanCoalRateSubtree(updatedDualTree, subtreeIndex)
           }
-          updatedLogPrior <- .updateLogPrior(updatedDualTree, chainState$phyloAndTransTree, chainState$logPrior, paraName = paraName, logPriorAndTransFunList = logPriorAndTransFunList, control = control)
+          # } else if (paraName == "topology") {
+          #   if (proposalValueAndTransKernRatio$transKernRatio != 1e-200) { # This is a trick to signal that a topology transition was indeed processed
+          #     updatedLogLik <- logLikFun(.convertToPhylo(updatedDualTree), phyDatData, evoParsList)
+          #   }
+          # }
+          updatedLogPrior <- .updateLogPrior(updatedDualTree = updatedDualTree, originalDualTree = chainState$phyloAndTransTree, previousLogPriorValues = chainState$logPrior, paraName = paraName, logPriorAndTransFunList = logPriorAndTransFunList, control = control)
 
           proposalLogPP <- (updatedLogLik + sum(updatedLogPrior)) * 1/MCMCcontrol$temperatureParFun(chainNumber)
           exponentValue <- proposalLogPP - chainState$logPP
@@ -369,9 +375,9 @@ phylo <- function(edge, edge.length, tip.label, node.label = NULL) {
             chainState$logPrior <- updatedLogPrior
             chainState$logPP <- proposalLogPP
             chainState$evoParsList <- evoParsList # Needlessly repeated, but does not take too much memory, and allows the chains to be easily resumed from any iteration.
-            if (paraName == "topology") {
-              #NOT IMPLEMENTED
-            }
+            # if (paraName == "topology") {
+            #   #NOT IMPLEMENTED
+            # }
           }
         }
         if ((MCMCiter %% MCMCcontrol$stepSize) == 0) {
@@ -447,19 +453,15 @@ phylo <- function(edge, edge.length, tip.label, node.label = NULL) {
 .updateLogPrior <- function(updatedDualTree, originalDualTree, previousLogPriorValues, paraName, logPriorAndTransFunList, control) {
   updatedLogPrior <- previousLogPriorValues
   updatedLogPrior[[paraName]] <- logPriorAndTransFunList[[paraName]]$logPriorFun(updatedDualTree)
-  if (paraName == "b") { # Lambda prior means are already modified
-    diffBranchNums <- which(getPhyloEdgeLengths(updatedDualTree) != getPhyloEdgeLengths(originalDualTree))
-    if (length(diffBranchNums) > 0) {
-      parentNums <- updatedDualTree$edge[diffBranchNums, 1]
-      subtreeNums <- unique(sapply(updatedDualTree$node.label[parentNums - ape::Ntip(updatedDualTree)], "[[", "subtreeIndex"))
-      LambdaNames <- paste("Lambda", subtreeNums, sep = "")
-      updatedLogPrior[LambdaNames] <- sapply(LambdaNames, function(LambdaName) logPriorAndTransFunList[[LambdaName]]$logPriorFun(updatedDualTree))
-    }
-  } else if (paraName %in% grep(pattern = "Lambda", x = names(logPriorAndTransFunList), value = TRUE)) {
-    subtreeIndex <- as.numeric(gsub(x = paraName, pattern = "[a-zA-Z]+", replacement = ""))
-    priorName <- paste("nodeTimes", subtreeIndex, sep = "")
-    updatedLogPrior[[priorName]] <- logPriorAndTransFunList[[priorName]]$logPriorFun(updatedDualTree)
-  }
+  # if (paraName == "b") { # Lambda prior means are already modified
+  #   diffBranchNums <- which(getPhyloEdgeLengths(updatedDualTree) != getPhyloEdgeLengths(originalDualTree))
+  #   if (length(diffBranchNums) > 0) {
+  #     parentNums <- updatedDualTree$edge[diffBranchNums, 1]
+  #     subtreeNums <- unique(sapply(updatedDualTree$node.label[parentNums - ape::Ntip(updatedDualTree)], "[[", "subtreeIndex"))
+  #     LambdaNames <- paste("SubtreeIndex", subtreeNums, sep = "")
+  #     updatedLogPrior[LambdaNames] <- sapply(LambdaNames, function(LambdaName) logPriorAndTransFunList[[LambdaName]]$logPriorFun(updatedDualTree))
+  #   }
+  # }
   updatedLogPrior
 }
 
@@ -483,21 +485,21 @@ phylo <- function(edge, edge.length, tip.label, node.label = NULL) {
 #'  MCMC.control(n = 1e6, stepSize = 100, burnin = 1e5)
 #' }
 #' @export
-MCMC.control <- function(n = 2e5, nIterPerSweep = 100, nChains = 1, temperatureParFun = function(x) x, stepSize = 50, burnin = 1e4, folderToSaveIntermediateResults = NULL, chainId = NULL, coalRateKernelSD = 0.5, print.frequency = 10, phyloBranchLengthsTransFunTuningPara = 0.5, propPhyloBranchesToModify = 0.1, transTreeTuningPara = 0.99, rootTransitionPar = 15, logClockRatesPriorSD = log(5), rootTimePriorSD = 7, topologyTransition = FALSE, coalescentPriorCoefVar = 10, propNodeTimesToModify = 0) {
+MCMC.control <- function(n = 2e5, nIterPerSweep = 100, nChains = 1, temperatureParFun = function(x) x, stepSize = 50, burnin = 1e4, folderToSaveIntermediateResults = NULL, chainId = NULL, coalRateKernelSD = 0.5, print.frequency = 10, phyloBranchLengthsTransFunTuningPara = 0.5, phyloBranchLengthsCoefVar = 0.1, propPhyloBranchesToModify = 0.1, transTreeTuningPara = 0.9999, rootTransitionPar = 15, logClockRatesPriorSD = log(5), rootTimePriorSD = 7, topologyTransition = TRUE, coalescentPriorCoefVar = 10, propNodeTimesToModify = 0) {
   if (temperatureParFun(1) != 1) {
     stop("temperatureParFun(1) must return '1' as it is for the cold chain! Please fix this (or leave the default value) and re-run the code. \n")
   }
   if (nChains == 1) {
     nIterPerSweep <- stepSize
   }
-  list(n = n, nIterPerSweep = nIterPerSweep, nChains = nChains, temperatureParFun = temperatureParFun, stepSize = stepSize, burnin = burnin, folderToSaveIntermediateResults = folderToSaveIntermediateResults, chainId = chainId, coalRateKernelSD = coalRateKernelSD, print.frequency = print.frequency, phyloBranchLengthsTransFunTuningPara = phyloBranchLengthsTransFunTuningPara, propPhyloBranchesToModify = propPhyloBranchesToModify, transTreeTuningPara = transTreeTuningPara, rootTransitionPar = rootTransitionPar, rootTimePriorSD = rootTimePriorSD, logClockRatesPriorSD = logClockRatesPriorSD, topologyTransition = topologyTransition, coalescentPriorCoefVar = coalescentPriorCoefVar, propNodeTimesToModify = propNodeTimesToModify)
+  list(n = n, nIterPerSweep = nIterPerSweep, nChains = nChains, temperatureParFun = temperatureParFun, stepSize = stepSize, burnin = burnin, folderToSaveIntermediateResults = folderToSaveIntermediateResults, chainId = chainId, coalRateKernelSD = coalRateKernelSD, print.frequency = print.frequency, phyloBranchLengthsTransFunTuningPara = phyloBranchLengthsTransFunTuningPara, propPhyloBranchesToModify = propPhyloBranchesToModify, transTreeTuningPara = transTreeTuningPara, rootTransitionPar = rootTransitionPar, rootTimePriorSD = rootTimePriorSD, logClockRatesPriorSD = logClockRatesPriorSD, topologyTransition = topologyTransition, coalescentPriorCoefVar = coalescentPriorCoefVar, propNodeTimesToModify = propNodeTimesToModify, phyloBranchLengthsCoefVar = phyloBranchLengthsCoefVar)
 }
 
-.topologyTransFun <- function(phyloAndTransTree) {
+.topologyTransFun <- function(phyloAndTransTree, control) {
   transKernRatio <- 1
-  proposedMove <- .rNNItransTree(phyloAndTransTree)
+  proposedMove <- .rNNItransTree(phyloAndTransTree, control = control)
   # I don't want a move to be processed if the proposal is identical to the original state.
-  if (identical(proposedMove, phyloAndTransTree)) transKernRatio <- 1e-300
+  if (identical(proposedMove, phyloAndTransTree)) transKernRatio <- 1e-200
   list(value = proposedMove, transKernRatio = transKernRatio)
 }
 
@@ -650,52 +652,58 @@ MCMC.control <- function(n = 2e5, nIterPerSweep = 100, nChains = 1, temperatureP
 # External branches only have a prior which moves their lengths away from 0.
 # Internal branches of length 0 would produce a multifurcation, so should not be found.
 
-.phyloBranchLengthsLogPriorFun <- function(phyloAndTransTree, extBranchLengthPriorMean, extBranchLengthPriorSD) {
-
+.phyloBranchLengthsLogPriorFun <- function(phyloAndTransTree, sumBranchLengthsPriorMean, sumBranchLengthsPriorSD, subtreeIndex) {
+  funToGetBranchLengths <- function(index) {
+    nodesInSubtree <- which(sapply(phyloAndTransTree$node.label, "[[", "subtreeIndex") == index)
+    nodeChildren <- do.call("c", lapply(nodesInSubtree + length(phyloAndTransTree$tip.label), function(nodeNum) {
+      phyloAndTransTree$edge[which(phyloAndTransTree$edge[ , 1] == nodeNum), 2]
+    }))
+    matchingBranchIndices <- match(nodeChildren, phyloAndTransTree$edge[ , 2])
+    sapply(matchingBranchIndices, function(branchIndex) phyloAndTransTree$edge.length[[branchIndex]]$phylogeny)
+  }
   branchLengths <- sapply(phyloAndTransTree$edge.length, "[[", "phylogeny")
-  sum(dnorm(sum(branchLengths), mean = extBranchLengthPriorMean, sd = extBranchLengthPriorSD, log = TRUE))
-    # externalEdges <- which(phyloAndTransTree$edge[ , 2] <= ape::Ntip(phyloAndTransTree))
-    # paretoPars <- computeParetoMMpars(meanValue = extBranchLengthPriorMean, minValue = 1e-15)
-    # sum(dpareto(x = branchLengths[externalEdges], alpha = paretoPars$alpha, xm = paretoPars$xm, log = TRUE))
-    # logNormPars <- computeLogNormMMpars(meanValue = extBranchLengthPriorMean, varValue = extBranchLengthPriorSD^2)
-    # sum(dlnorm(branchLengths[externalEdges], meanlog = logNormPars$mu, sdlog = logNormPars$sigma, log = TRUE))
-    # logMean <- log(extBranchLengthPriorMean)
-    # sum(dnorm(log(branchLengths[externalEdges]), mean = logMean, sd = log(5), log = TRUE))
+  if (!is.null(subtreeIndex)) branchLengths <- funToGetBranchLengths(subtreeIndex)
+
+  dnorm(sum(branchLengths), mean = sumBranchLengthsPriorMean, sd = sumBranchLengthsPriorSD, log = TRUE)
 }
 
 # The mode of the displaced log-normal kernel is set at current branch lengths.
 # It is then enough to pick a value for sigma, the variance of the random variable expressed on the log-scale, to get a suitable value for mu.
 # A better setup might involve working on the logarithmic scale and simulating normal numbers, making the transition kernel symmetric.
 
-.phyloBranchLengthsTransFun <- function(phyloAndTransTree, phyloBranchLengthsTransFunTuningPara = 0.5, propToModify = 0.1) {
-  # subtreeIndices <- seq_along(phyloAndTransTree$LambdaList)
-  # for (subtreeIndex in subtreeIndices) {
-  #   nodesInSubtree <- which(sapply(phyloAndTransTree$node.label, "[[", "subtreeIndex") == subtreeIndex)
-  #   nodeChildren <- do.call("c", phyloAndTransTree$childrenList[nodesInSubtree])
-  #   matchingBranchIndices <- match(nodeChildren, phyloAndTransTree$edge[ , 2])
-  #   branchLengths <- sapply(matchingBranchIndices, function(branchIndex) phyloAndTransTree$edge.length[[branchIndex]]$phylogeny)
-  #   # scalingFactor <- runif(1, min = 1/(1 + phyloBranchLengthsTransFunTuningPara), max = 1 + phyloBranchLengthsTransFunTuningPara)
-  #   scalingFactor <- sample(c(1/(1 + phyloBranchLengthsTransFunTuningPara), 1 + phyloBranchLengthsTransFunTuningPara), size = 1)
-  #   newBranchLengths <- scalingFactor * branchLengths
-  #   for (j in seq_along(matchingBranchIndices)) {
-  #     phyloAndTransTree$edge.length[[matchingBranchIndices[[j]]]]$phylogeny <- newBranchLengths[[j]]
-  #   }
-  # }
-  # numToModify <- 1
-  # if (propToModify > 0) {
-  #   numToModify <- ceiling(propToModify * length(branchLengths))
-  # }
-  # branchesToModify <- sample.int(n = length(branchLengths), size = numToModify, replace = FALSE)
-  # previousLengths <- branchLengths[branchesToModify]
-  # # logScaleMean <- log(previousLengths)
-  # # newLengths <- exp(rnorm(n = length(logScaleMean), mean = logScaleMean, sd = phyloBranchLengthsTransFunTuningPara))
-  # multipliers <- runif(length(previousLengths), min = 1 - phyloBranchLengthsTransFunTuningPara, max = 1 + phyloBranchLengthsTransFunTuningPara)
-  # newLengths <- multipliers * previousLengths
-  # for (i in seq_along(branchesToModify)) {
-  #   phyloAndTransTree$edge.length[[branchesToModify[[i]]]]$phylogeny <- newLengths[[i]]
-  #   phyloAndTransTree$edge.length[[branchesToModify[[i]]]]$logXi <- log(newLengths[[i]]) - log(phyloAndTransTree$edge.length[[branchesToModify[[i]]]]$transmissionTree)
-  # }
-  #
+.phyloBranchLengthsTransFun <- function(phyloAndTransTree, subtreeIndex = NULL, control) {
+  subtreeIndices <- subtreeIndex
+  if (is.null(subtreeIndices)) {
+    subtreeIndices <- seq_along(phyloAndTransTree$LambdaList)
+  }
+  funToGetBranchNums <- function(index) {
+    nodesInSubtree <- which(sapply(phyloAndTransTree$node.label, "[[", "subtreeIndex") == index)
+    nodeChildren <- do.call("c", lapply(nodesInSubtree + length(phyloAndTransTree$tip.label), function(nodeNum) {
+      phyloAndTransTree$edge[which(phyloAndTransTree$edge[ , 1] == nodeNum), 2]
+    }))
+    match(nodeChildren, phyloAndTransTree$edge[ , 2])
+  }
+  branchNums <- do.call("c", lapply(subtreeIndices, funToGetBranchNums))
+
+  branchLengths <- sapply(branchNums, function(branchIndex) phyloAndTransTree$edge.length[[branchIndex]]$phylogeny)
+  nonNullBranchesIndices <- which(branchLengths != control$lengthForNullExtBranchesInPhylo)
+  if (length(nonNullBranchesIndices) == 0) {
+    return(list(value = phyloAndTransTree, transKernRatio = 1)) # We return the starting tree, since no transition is allowed.
+  }
+  branchNums <- branchNums[nonNullBranchesIndices]
+  branchLengths <- branchLengths[nonNullBranchesIndices]
+  # scalingFactor <- sample(c(1/(1 + phyloBranchLengthsTransFunTuningPara), 1 + phyloBranchLengthsTransFunTuningPara), size = 1)
+  # scalingFactor <- runif(1, min = 1/(1 + phyloBranchLengthsTransFunTuningPara), max = 1 + phyloBranchLengthsTransFunTuningPara)
+  scalingFactor <- runif(length(branchLengths), min = 1/(1 + control$MCMC.control$phyloBranchLengthsTransFunTuningPara), max = 1 + control$MCMC.control$phyloBranchLengthsTransFunTuningPara)
+
+  newBranchLengths <- scalingFactor * branchLengths
+  numBranchesToMod <- ceiling(length(branchLengths) * control$MCMC.control$propPhyloBranchesToModify)
+  if (numBranchesToMod == 0) numBranchesToMod <- 1
+  branchIndices <- sample(seq_along(branchNums), size = numBranchesToMod)
+  for (j in branchIndices) {
+    phyloAndTransTree$edge.length[[branchNums[[j]]]]$phylogeny <- newBranchLengths[[j]]
+  }
+
   list(value = phyloAndTransTree, transKernRatio = 1)
 }
 
@@ -961,11 +969,15 @@ MCMC.control <- function(n = 2e5, nIterPerSweep = 100, nChains = 1, temperatureP
 
 .nodeTimesSubtreeLogPriorFun <- function(phyloAndTransTree, subtreeIndex, estRootTime, control) {
   Lambda <- phyloAndTransTree$LambdaList[[subtreeIndex]]$Lambda
-  subtreeRootNum <- phyloAndTransTree$LambdaList[[subtreeIndex]]$rootNodeNum
   subtreeIndices <- sapply(phyloAndTransTree$node.label, "[[", "subtreeIndex")
   nodesInSubtreeNums <- which(subtreeIndices == subtreeIndex) + length(phyloAndTransTree$tip.label)
   getTipTimesList <- function(nodeNum) {
-    childrenNums <- phyloAndTransTree$childrenList[[nodeNum - length(phyloAndTransTree$tip.label)]]
+    if (!control$MCMC.control$topologyTransition) {
+      childrenNums <- phyloAndTransTree$childrenList[[nodeNum - length(phyloAndTransTree$tip.label)]]
+    } else {
+      childrenNums <- phyloAndTransTree$edge[which(nodeNum == phyloAndTransTree$edge[ , 1]), 2]
+    }
+
     # childrenNums <- phyloAndTransTree$edge[phyloAndTransTree$edge[ , 1] == nodeNum , 2]
     childrenSubtreeIndices <- sapply(childrenNums, function(childNum) {
       if (childNum <= length(phyloAndTransTree$tip.label)) {
@@ -999,7 +1011,8 @@ MCMC.control <- function(n = 2e5, nIterPerSweep = 100, nChains = 1, temperatureP
   dlnorm(lambdaValue, meanlog = logNormPars$mu, sdlog = logNormPars$sigma, log = TRUE)
 }
 
-.coalescenceRateTransFun <- function(phyloAndTransTree, index, sd) {
+.coalescenceRateTransFun <- function(phyloAndTransTree, index, control) {
+  sd <- control$MCMC.control$coalRateKernelSD
   currentState <- phyloAndTransTree$LambdaList[[index]]$Lambda
   logNewState <- rnorm(n = 1, mean = log(currentState), sd = sd)
   names(logNewState) <- names(currentState)
@@ -1481,54 +1494,52 @@ dist.tips.root.phylo <- function(phylogeny, tips) {
   })
 }
 
-.genStartPhyloAndTransTreeAlt <- function(phylogeny, timestampsInDays, regionStamps, logClockRatePriorMean, estRootTime, control) {
-  phyloAndTransTree <- phylogeny
-  phyloAndTransTree$edge.length <- replace(phyloAndTransTree$edge.length, which(phyloAndTransTree$edge.length == 0), control$lengthForNullExtBranchesInPhylo)
-  phyloAndTransTree$tip.label <- lapply(phyloAndTransTree$tip.label, function(x) list(name = x, time = timestampsInDays[[x]], region = regionStamps[[x]]))
-  phyloAndTransTree$node.label <- lapply(1:ape::Nnode(phyloAndTransTree), function(node) {
-    list(time = NA, region = NA)
-  })
-  if (!control$MCMC.control$topologyTransition) {
-    phyloAndTransTree$childrenList <- lapply(seq_along(phyloAndTransTree$node.label) + ape::Ntip(phyloAndTransTree), function(nodeNum) phangorn::Children(phyloAndTransTree, nodeNum)) # Useful for speeding up the code when the topology does not change.
-  }
-  phyloAndTransTree <- .identifyNodeRegions(phyloAndTransTree)
-  # Initialises transmission tree branch lengths conditional on phylogenetic branch lengths and an equal clock rate across branches
-  phyloAndTransTree <- .initialiseTree(phyloAndTransTree, timestampsInDays, regionStamps, startLogClockRate = logClockRatePriorMean, estRootTime, control)
-  # phyloAndTransTree <- .refineTimeEstimates(phyloAndTransTree = phyloAndTransTree, estRootTime = estRootTime, logClockRatePriorMean = logClockRatePriorMean, control = control)
-  phyloAndTransTree <- .addCoalescenceRates(phyloAndTransTree, estRootTime = estRootTime, control = control)
-  phyloAndTransTree
-}
-
-.initialiseTree <- function(phyloAndTransTree, timestampsInDays, regionStamps, startLogClockRate, estRootTime, control) {
-
-  nodesToCheck <- .getOrderedNodeNumsForTimeUpdate(phyloAndTransTree)
-  phyloAndTransTree$edge.length <- lapply(seq_along(phyloAndTransTree$edge.length), function(edgeIndex) {
-    list(phylogeny = phyloAndTransTree$edge.length[[edgeIndex]], transmissionTree = NA, logXi = NA)
-  })
-
-  for (nodeNumber in nodesToCheck) {
-    childrenNums <- phangorn::Children(phyloAndTransTree, nodeNumber)
-    childrenEdgeNums <- match(childrenNums, phyloAndTransTree$edge[ , 2])
-    childrenTimes <- sapply(childrenNums, function(childNum) .getVertexLabel(phyloAndTransTree, childNum)$time)
-    maximumTime <- min(childrenTimes)
-    funToOptimise <- function(rootTime) {
-      phyloAndTransTree$node.label[[nodeNumber - ape::Ntip(phyloAndTransTree)]]$time <- rootTime
-      phyloAndTransTree$edge.length[childrenEdgeNums] <- lapply(seq_along(childrenEdgeNums), function(childIndex) {
-        newEdge <- phyloAndTransTree$edge.length[[childrenEdgeNums[[childIndex]]]]
-        newEdge$transmissionTree <- childrenTimes[[childIndex]] - rootTime
-        newEdge$logXi <- log(newEdge$phylogeny) - log(newEdge$transmissionTree)
-        newEdge
-      })
-      nodeLogPrior <- .childrenBranchLengthsWeights(phyloAndTransTree, nodeNumber, startLogClockRate, control = control)
-      if (nodeNumber == ape::Ntip(phyloAndTransTree) + 1) nodeLogPrior <- nodeLogPrior + .rootTimeLogPriorFun(rootTime, meanValue = estRootTime, sd = control$MCMC.control$rootTimePriorSD)
-      -nodeLogPrior
-    }
-    optRootTime <- nloptr::lbfgs(x0 = maximumTime - 1, fn = funToOptimise, upper = maximumTime - 1/86400, control = list(xtol_rel = 1e-4))
-
-    phyloAndTransTree$node.label[[nodeNumber - ape::Ntip(phyloAndTransTree)]]$time <- optRootTime$par + rnorm(1, sd = 1e-15) # A bit of jittering to ensure that we don't get equal branching times...
-  }
-  .addTransTreeEdgeLengths(phyloAndTransTree)
-}
+# .genStartPhyloAndTransTreeAlt <- function(phylogeny, timestampsInDays, regionStamps, logClockRatePriorMean, estRootTime, control) {
+#   phyloAndTransTree <- phylogeny
+#   phyloAndTransTree$edge.length <- replace(phyloAndTransTree$edge.length, which(phyloAndTransTree$edge.length == 0), control$lengthForNullExtBranchesInPhylo)
+#   phyloAndTransTree$tip.label <- lapply(phyloAndTransTree$tip.label, function(x) list(name = x, time = timestampsInDays[[x]], region = regionStamps[[x]]))
+#   phyloAndTransTree$node.label <- lapply(1:ape::Nnode(phyloAndTransTree), function(node) {
+#     list(time = NA, region = NA)
+#   })
+#
+#   phyloAndTransTree <- .identifyNodeRegions(phyloAndTransTree)
+#   # Initialises transmission tree branch lengths conditional on phylogenetic branch lengths and an equal clock rate across branches
+#   phyloAndTransTree <- .initialiseTree(phyloAndTransTree, timestampsInDays, regionStamps, startLogClockRate = logClockRatePriorMean, estRootTime, control)
+#   # phyloAndTransTree <- .refineTimeEstimates(phyloAndTransTree = phyloAndTransTree, estRootTime = estRootTime, logClockRatePriorMean = logClockRatePriorMean, control = control)
+#   phyloAndTransTree <- .computeCoalRatesAddSubtreeIndex(phyloAndTransTree, estRootTime = estRootTime, control = control)
+#   phyloAndTransTree
+# }
+#
+# .initialiseTree <- function(phyloAndTransTree, timestampsInDays, regionStamps, startLogClockRate, estRootTime, control) {
+#
+#   nodesToCheck <- .getOrderedNodeNumsForTimeUpdate(phyloAndTransTree)
+#   phyloAndTransTree$edge.length <- lapply(seq_along(phyloAndTransTree$edge.length), function(edgeIndex) {
+#     list(phylogeny = phyloAndTransTree$edge.length[[edgeIndex]], transmissionTree = NA, logXi = NA)
+#   })
+#
+#   for (nodeNumber in nodesToCheck) {
+#     childrenNums <- phangorn::Children(phyloAndTransTree, nodeNumber)
+#     childrenEdgeNums <- match(childrenNums, phyloAndTransTree$edge[ , 2])
+#     childrenTimes <- sapply(childrenNums, function(childNum) .getVertexLabel(phyloAndTransTree, childNum)$time)
+#     maximumTime <- min(childrenTimes)
+#     funToOptimise <- function(rootTime) {
+#       phyloAndTransTree$node.label[[nodeNumber - ape::Ntip(phyloAndTransTree)]]$time <- rootTime
+#       phyloAndTransTree$edge.length[childrenEdgeNums] <- lapply(seq_along(childrenEdgeNums), function(childIndex) {
+#         newEdge <- phyloAndTransTree$edge.length[[childrenEdgeNums[[childIndex]]]]
+#         newEdge$transmissionTree <- childrenTimes[[childIndex]] - rootTime
+#         newEdge$logXi <- log(newEdge$phylogeny) - log(newEdge$transmissionTree)
+#         newEdge
+#       })
+#       nodeLogPrior <- .childrenBranchLengthsWeights(phyloAndTransTree, nodeNumber, startLogClockRate, control = control)
+#       if (nodeNumber == ape::Ntip(phyloAndTransTree) + 1) nodeLogPrior <- nodeLogPrior + .rootTimeLogPriorFun(rootTime, meanValue = estRootTime, sd = control$MCMC.control$rootTimePriorSD)
+#       -nodeLogPrior
+#     }
+#     optRootTime <- nloptr::lbfgs(x0 = maximumTime - 1, fn = funToOptimise, upper = maximumTime - 1/86400, control = list(xtol_rel = 1e-4))
+#
+#     phyloAndTransTree$node.label[[nodeNumber - ape::Ntip(phyloAndTransTree)]]$time <- optRootTime$par + rnorm(1, sd = 1e-15) # A bit of jittering to ensure that we don't get equal branching times...
+#   }
+#   .addTransTreeEdgeLengths(phyloAndTransTree)
+# }
 
 .addTransTreeEdgeLengths <- function(phyloAndTransTree) {
   phyloAndTransTree$edge.length <- lapply(seq_along(phyloAndTransTree$edge.length), function(x) {
@@ -1646,49 +1657,57 @@ dpareto <- function(x, alpha, xm, log = TRUE) {
   }
 }
 
-.nodeTimesSubtreeTransFun <- function(phyloAndTransTree, subtreeIndex, control) {
-  if (control$MCMC.control$propNodeTimesToModify == 0) {
-    control$MCMC.control$propNodeTimesToModify <- 1e-200
-  } # This will ensure that only one time is modified at a time
-  nodeNumsToSampleFrom <- which(sapply(phyloAndTransTree$node.label, "[[", "subtreeIndex") == subtreeIndex) + ape::Ntip(phyloAndTransTree)
-  nodesToModNums <- nodeNumsToSampleFrom[[1]]
-  if (length(nodeNumsToSampleFrom) > 1) {
-    nodesToModNums <- sample(nodeNumsToSampleFrom, size = ceiling(control$MCMC.control$propNodeTimesToModify * length(nodeNumsToSampleFrom)))
-  }
-  tuningPara <- control$MCMC.control$transTreeTuningPara
-  rootTransitionPar <- control$MCMC.control$rootTransitionPar
-
-  for (nodeNumber in nodesToModNums) {
-    numTips <- length(phyloAndTransTree$tip.label)
-    parentNum <- phyloAndTransTree$edge[match(nodeNumber, phyloAndTransTree$edge[ , 2]), 1]
-    parentTime <- phyloAndTransTree$node.label[[parentNum - numTips]]$time
-    currentTime <- phyloAndTransTree$node.label[[nodeNumber - numTips]]$time
-    childrenNums <- phyloAndTransTree$childrenList[[nodeNumber - numTips]]
-    childrenTimes <- sapply(childrenNums, function(childIndex) .getVertexLabel(phyloAndTransTree, childIndex)$time)
-    branchIndex <- match(nodeNumber, phyloAndTransTree$edge[ , 2])
-    if (!is.na(branchIndex)) {
-      lowerBound <- currentTime - (currentTime - parentTime) * tuningPara
-    } else {
-      lowerBound <- currentTime - runif(1, 0, rootTransitionPar) # Time is in days.
-    }
-    upperBound <- currentTime + abs(min(childrenTimes) - currentTime) * tuningPara
-    updatedNodeTime <- runif(1, lowerBound, upperBound)
-
-    phyloAndTransTree$node.label[[nodeNumber - numTips]]$time <- updatedNodeTime
-    if (!is.na(branchIndex)) { # Root node has no parent, hence the check.
-      phyloAndTransTree$edge.length[[branchIndex]]$transmissionTree <- phyloAndTransTree$edge.length[[branchIndex]]$transmissionTree + (updatedNodeTime - currentTime)
-      phyloAndTransTree$edge.length[[branchIndex]]$logXi <- log(phyloAndTransTree$edge.length[[branchIndex]]$phylogeny) - log(phyloAndTransTree$edge.length[[branchIndex]]$transmissionTree)
-    }
-
-    childrenIndices <- match(childrenNums, phyloAndTransTree$edge[ , 2])
-    for (index in seq_along(childrenIndices)) {
-      phyloAndTransTree$edge.length[[childrenIndices[[index]]]]$transmissionTree <- childrenTimes[[index]] - updatedNodeTime
-      phyloAndTransTree$edge.length[[childrenIndices[[index]]]]$logXi <- log(phyloAndTransTree$edge.length[[childrenIndices[[index]]]]$phylogeny) - log(phyloAndTransTree$edge.length[[childrenIndices[[index]]]]$transmissionTree)
-    }
-  }
-
-  list(value = phyloAndTransTree, transKernRatio = 1) # The uniform transition kernel is symmetrical.
-}
+# .nodeTimesSubtreeTransFun <- function(phyloAndTransTree, subtreeIndex, control) {
+#   phyloAndTransTreeCopy <- phyloAndTransTree
+#   if (control$MCMC.control$propNodeTimesToModify == 0) {
+#     control$MCMC.control$propNodeTimesToModify <- 1e-200
+#   } # This will ensure that only one time is modified at a time
+#   nodeNumsToSampleFrom <- which(sapply(phyloAndTransTreeCopy$node.label, "[[", "subtreeIndex") == subtreeIndex) + ape::Ntip(phyloAndTransTreeCopy)
+#   nodesToModNums <- nodeNumsToSampleFrom[[1]]
+#   if (length(nodeNumsToSampleFrom) > 1) {
+#     nodesToModNums <- sample(nodeNumsToSampleFrom, size = ceiling(control$MCMC.control$propNodeTimesToModify * length(nodeNumsToSampleFrom)))
+#   }
+#   tuningPara <- control$MCMC.control$transTreeTuningPara
+#   rootTransitionPar <- control$MCMC.control$rootTransitionPar
+#
+#   for (nodeNumber in nodesToModNums) {
+#     numTips <- length(phyloAndTransTreeCopy$tip.label)
+#     parentNum <- phyloAndTransTreeCopy$edge[match(nodeNumber, phyloAndTransTreeCopy$edge[ , 2]), 1]
+#     parentTime <- phyloAndTransTreeCopy$node.label[[parentNum - numTips]]$time
+#     currentTime <- phyloAndTransTreeCopy$node.label[[nodeNumber - numTips]]$time
+#     if (!control$MCMC.control$topologyTransition) {
+#       childrenNums <- phyloAndTransTreeCopy$childrenList[[nodeNumber - numTips]]
+#     } else {
+#       childrenNums <- phyloAndTransTree$edge[which(nodeNumber == phyloAndTransTree$edge[ , 1]), 2]
+#     }
+#     childrenTimes <- sapply(childrenNums, function(childIndex) .getVertexLabel(phyloAndTransTreeCopy, childIndex)$time)
+#     branchIndex <- match(nodeNumber, phyloAndTransTreeCopy$edge[ , 2])
+#     if (!is.na(branchIndex)) {
+#       lowerBound <- currentTime - (currentTime - parentTime) * tuningPara
+#     } else {
+#       lowerBound <- currentTime - runif(1, 0, rootTransitionPar) # Time is in days.
+#     }
+#     upperBound <- currentTime + abs(min(childrenTimes) - currentTime) * tuningPara
+#     updatedNodeTime <- runif(1, lowerBound, upperBound)
+#
+#     phyloAndTransTreeCopy$node.label[[nodeNumber - numTips]]$time <- updatedNodeTime
+#     if (!is.na(branchIndex)) { # Root node has no parent, hence the check.
+#       phyloAndTransTreeCopy$edge.length[[branchIndex]]$transmissionTree <- phyloAndTransTreeCopy$edge.length[[branchIndex]]$transmissionTree + (updatedNodeTime - currentTime)
+#       phyloAndTransTreeCopy$edge.length[[branchIndex]]$logXi <- log(phyloAndTransTreeCopy$edge.length[[branchIndex]]$phylogeny) - log(phyloAndTransTreeCopy$edge.length[[branchIndex]]$transmissionTree)
+#     }
+#
+#     childrenIndices <- match(childrenNums, phyloAndTransTreeCopy$edge[ , 2])
+#     for (index in seq_along(childrenIndices)) {
+#       phyloAndTransTreeCopy$edge.length[[childrenIndices[[index]]]]$transmissionTree <- childrenTimes[[index]] - updatedNodeTime
+#       phyloAndTransTreeCopy$edge.length[[childrenIndices[[index]]]]$logXi <- log(phyloAndTransTreeCopy$edge.length[[childrenIndices[[index]]]]$phylogeny) - log(phyloAndTransTreeCopy$edge.length[[childrenIndices[[index]]]]$transmissionTree)
+#     }
+#   }
+#   if (any(is.na(sapply(phyloAndTransTreeCopy$node.label, "[[", "time")))) {
+#     cat("Node times transition produced NAs! \n")
+#     browser()
+#   }
+#   list(value = phyloAndTransTreeCopy, transKernRatio = 1) # The uniform transition kernel is symmetrical.
+# }
 
 .getOrderedNodeNumsForTimeUpdate <- function(phyloAndTransTree) {
   nodeCounts <- rep(0, length(phyloAndTransTree$edge.length) + 1)
@@ -1754,12 +1773,39 @@ dpareto <- function(x, alpha, xm, log = TRUE) {
 }
 
 # For a NNI move to be possible with respect to the transmission tree, the sibling of the child node of the internal branch selected for the move be assigned a time point which is higher (lower in the tree).
-# Function should work with multifurcations.
-.rNNItransTree <- function(phyloAndTransTree, moves = 1) {
-  childNodesToTry <- sample(seq(from = ape::Ntip(phyloAndTransTree) + 2, to = length(phyloAndTransTree$edge.length) + 1), size = ape::Nnode(phyloAndTransTree) - 1)
+# Function does not allow a move that would allow a multifurcating split to have both tips and nodes as children.
+# Function only allows transitions within subtrees.
+
+.rNNItransTree <- function(phyloAndTransTree, moves = 1, subtreeIndex = NULL, control) {
+  if (is.null(subtreeIndex)) {
+    nodesInSubtrees <- table(sapply(phyloAndTransTree$node.label, "[[", "subtreeIndex"))
+    sampleProbs <- (nodesInSubtrees - 1)/sum(nodesInSubtrees - 1)
+    subtreeIndex <- sample(seq_along(nodesInSubtrees), prob = sampleProbs, size = 1)
+  }
+  nodesInSubtreeNums <- which(sapply(phyloAndTransTree$node.label, "[[", "subtreeIndex") == subtreeIndex) + length(phyloAndTransTree$tip.label)
+  if (length(nodesInSubtreeNums) < 2) return(phyloAndTransTree) # No NNI move within the subtree if it's a transmission pair or a singleton.
+
+  parentNums <- phyloAndTransTree$edge[match(nodesInSubtreeNums, phyloAndTransTree$edge[ , 2]), 1]  # The subtree root numbers will produce a FALSE.
+  parentRegions <- sapply(parentNums, function(nodeNum) phyloAndTransTree$node.label[[nodeNum - length(phyloAndTransTree$tip.label)]]$region)
+  currentRegions <- sapply(nodesInSubtreeNums, function(nodeNum) phyloAndTransTree$node.label[[nodeNum - length(phyloAndTransTree$tip.label)]]$region)
+  parentInSubtree <- parentRegions == currentRegions
+  nodesToSampleFrom <- nodesInSubtreeNums[parentInSubtree]
+  childNodesToTry <- nodesToSampleFrom
+  if (length(childNodesToTry) > 1)
+    childNodesToTry <- sample(nodesToSampleFrom, size = length(nodesToSampleFrom))
+  # It is possible that several subtrees will not allow permit a NNI move, due to tip time constraints.
   index <- 1
   while (index <= length(childNodesToTry)) {
     childNum <- childNodesToTry[[index]]
+    if (control$MCMC.control$topologyTransition) {
+      grandchildrenNums <- phyloAndTransTree$edge[which(childNum == phyloAndTransTree$edge[ , 1]), 2]
+    } else {
+      grandchildrenNums <- phyloAndTransTree$childrenList[[childNum - length(phyloAndTransTree$tip.label)]]
+    }
+    if (length(grandchildrenNums) > 2) { # We can't allow a transition that would create a multifurcation that would include both tips and an internal node. childNum must be for an internal node.
+      index <- index + 1
+      next
+    }
     nodeTime <- phyloAndTransTree$node.label[[childNum - ape::Ntip(phyloAndTransTree)]]$time
     nodeSiblings <- phangorn::Siblings(phyloAndTransTree, childNum)
     nodeSiblingsTryOrder <- nodeSiblings
@@ -1778,6 +1824,7 @@ dpareto <- function(x, alpha, xm, log = TRUE) {
   treeToReturn <- phyloAndTransTree
   if (index > length(childNodesToTry)) {
     warning("Could not find a suitable NNI move for the transmission tree! \n")
+    return(phyloAndTransTree)
   } else {
     siblingEdgeNum <- match(nodeSibling, phyloAndTransTree$edge[ , 2])
     grandChildrenEdgeNums <- which(phyloAndTransTree$edge[ , 1] == childNum)
@@ -1787,8 +1834,20 @@ dpareto <- function(x, alpha, xm, log = TRUE) {
     treeToReturn$edge.length[c(siblingEdgeNum, edgeNumForInterchange)] <- treeToReturn$edge.length[c(edgeNumForInterchange, siblingEdgeNum)]
   }
   treeToReturn <- .updateTransTreeEdgeLengths(treeToReturn)
-  treeToReturn <- .clearNodeRegions(treeToReturn)
-  treeToReturn <- .identifyNodeRegions(treeToReturn)
+
+  # if (is.null(subtreeIndex)) { # A move within a given subtree should not affect the region labels.
+  #   treeToReturn <- .clearNodeRegions(treeToReturn)
+  #   treeToReturn <- .identifyNodeRegions(treeToReturn)
+  # }
+  inconsistencyTests <- sapply(1:(ape::Nnode(treeToReturn) - 1) + ape::Ntip(treeToReturn) + 1, function(x) {
+    currentTime <- .getVertexLabel(treeToReturn, x)$time
+    parentTime <- .getVertexLabel(treeToReturn, phangorn::Ancestors(treeToReturn, x, "parent"))$time
+    parentTime >= currentTime
+  })
+  if (any(inconsistencyTests)) {
+    cat("Inconsistent time values! \n")
+    browser()
+  }
   treeToReturn
 }
 
@@ -1828,6 +1887,85 @@ getNodeTimes <- function(phyloAndTransTree) {
   sapply(phyloAndTransTree$node.label, "[[", "time")
 }
 
-.optimiseExtBranchLengths <- function(phyloAndTransTree, logPriorAndTransFunList) {
-
+.subtreeLogPriorFun <- function(phyloAndTransTree, subtreeIndex, subtreePhyloBranchLengthsPriorMean, subtreePhyloBranchLengthsPriorSD, estRootTime, control) {
+  .coalescenceRateLogPriorFun(phyloAndTransTree, subtreeIndex, control) +
+  .nodeTimesSubtreeLogPriorFun(phyloAndTransTree = phyloAndTransTree, subtreeIndex = subtreeIndex, estRootTime = estRootTime, control = control) + .phyloBranchLengthsLogPriorFun(phyloAndTransTree, sumBranchLengthsPriorMean = subtreePhyloBranchLengthsPriorMean, sumBranchLengthsPriorSD = subtreePhyloBranchLengthsPriorSD, subtreeIndex = subtreeIndex)
 }
+
+.subtreeNoTopologyTransFun <- function(phyloAndTransTree, subtreeIndex, control) {
+  newPhyloAndTransTree <- .coalescenceRateTransFun(phyloAndTransTree, subtreeIndex, control)$value
+  newPhyloAndTransTree <- .nodeTimesSubtreeTransFun(phyloAndTransTree, subtreeIndex, control)$value
+  newPhyloAndTransTree <- .phyloBranchLengthsTransFun(phyloAndTransTree = newPhyloAndTransTree, subtreeIndex = subtreeIndex, control = control)$value
+
+  list(value = newPhyloAndTransTree, transKernRatio = 1)
+}
+
+.fullTreeTransFun <- function(phyloAndTransTree, control) {
+  newPhyloAndTransTree <- phyloAndTransTree
+  # nodesInSubtrees <- table(sapply(newPhyloAndTransTree$node.label, "[[", "subtreeIndex"))
+  # sampleProbs <- nodesInSubtrees/sum(nodesInSubtrees)
+  subtreeIndex <- sample(seq_along(newPhyloAndTransTree$LambdaList), size = 1)
+
+  newPhyloAndTransTree <- .subtreeNoTopologyTransFun(newPhyloAndTransTree, subtreeIndex = subtreeIndex, control = control)$value
+
+  if (control$MCMC.control$topologyTransition) {
+    newPhyloAndTransTree <- suppressWarnings(.rNNItransTree(newPhyloAndTransTree, subtreeIndex = subtreeIndex, control = control))
+  }
+  list(value = newPhyloAndTransTree, transKernRatio = 1)
+}
+
+.fullTreeLogPriorFun <- function(phyloAndTransTree, subtreePhyloBranchLengthsPriorMeans, subtreePhyloBranchLengthsPriorSDs, estRootTime, control) {
+  logPriorValueByCateg <- rep(0, 3)
+  names(logPriorValueByCateg) <- c("coalRates", "nodeTimes", "phyloLengths")
+  for (subtreeIndex in seq_along(phyloAndTransTree$LambdaList)) {
+    contributions <- c(.coalescenceRateLogPriorFun(phyloAndTransTree, subtreeIndex, control), .nodeTimesSubtreeLogPriorFun(phyloAndTransTree = phyloAndTransTree, subtreeIndex = subtreeIndex, estRootTime = estRootTime, control = control), .phyloBranchLengthsLogPriorFun(phyloAndTransTree, sumBranchLengthsPriorMean = subtreePhyloBranchLengthsPriorMeans[[subtreeIndex]], sumBranchLengthsPriorSD = subtreePhyloBranchLengthsPriorSDs[[subtreeIndex]], subtreeIndex = subtreeIndex))
+    logPriorValueByCateg <- logPriorValueByCateg + contributions
+  }
+
+  # print(logPriorValueByCateg)
+  sum(logPriorValueByCateg)
+}
+
+.nodeTimesSubtreeTransFun <- function(phyloAndTransTree, subtreeIndex, control) {
+  phyloAndTransTreeCopy <- phyloAndTransTree
+
+  nodesToModNums <- which(sapply(phyloAndTransTreeCopy$node.label, "[[", "subtreeIndex") == subtreeIndex) + ape::Ntip(phyloAndTransTreeCopy)
+
+  rootTransitionPar <- control$MCMC.control$rootTransitionPar
+
+  for (nodeNumber in nodesToModNums) {
+    numTips <- length(phyloAndTransTreeCopy$tip.label)
+    parentNum <- phyloAndTransTreeCopy$edge[match(nodeNumber, phyloAndTransTreeCopy$edge[ , 2]), 1]
+    parentTime <- phyloAndTransTreeCopy$node.label[[parentNum - numTips]]$time
+    currentTime <- phyloAndTransTreeCopy$node.label[[nodeNumber - numTips]]$time
+    if (!control$MCMC.control$topologyTransition) {
+      childrenNums <- phyloAndTransTreeCopy$childrenList[[nodeNumber - numTips]]
+    } else {
+      childrenNums <- phyloAndTransTree$edge[which(nodeNumber == phyloAndTransTree$edge[ , 1]), 2]
+    }
+    childrenTimes <- sapply(childrenNums, function(childIndex) .getVertexLabel(phyloAndTransTreeCopy, childIndex)$time)
+    branchIndex <- match(nodeNumber, phyloAndTransTreeCopy$edge[ , 2])
+    if (!is.na(branchIndex)) {
+      lowerBound <- currentTime - (currentTime - parentTime)
+    } else {
+      lowerBound <- currentTime - runif(1, 0, rootTransitionPar) # Time is in days.
+    }
+    upperBound <- currentTime + abs(min(childrenTimes) - currentTime)
+    updatedNodeTime <- runif(1, lowerBound, upperBound)
+
+    phyloAndTransTreeCopy$node.label[[nodeNumber - numTips]]$time <- updatedNodeTime
+    if (!is.na(branchIndex)) { # Root node has no parent, hence the check.
+      phyloAndTransTreeCopy$edge.length[[branchIndex]]$transmissionTree <- phyloAndTransTreeCopy$edge.length[[branchIndex]]$transmissionTree + (updatedNodeTime - currentTime)
+      phyloAndTransTreeCopy$edge.length[[branchIndex]]$logXi <- log(phyloAndTransTreeCopy$edge.length[[branchIndex]]$phylogeny) - log(phyloAndTransTreeCopy$edge.length[[branchIndex]]$transmissionTree)
+    }
+
+    childrenIndices <- match(childrenNums, phyloAndTransTreeCopy$edge[ , 2])
+    for (index in seq_along(childrenIndices)) {
+      phyloAndTransTreeCopy$edge.length[[childrenIndices[[index]]]]$transmissionTree <- childrenTimes[[index]] - updatedNodeTime
+      phyloAndTransTreeCopy$edge.length[[childrenIndices[[index]]]]$logXi <- log(phyloAndTransTreeCopy$edge.length[[childrenIndices[[index]]]]$phylogeny) - log(phyloAndTransTreeCopy$edge.length[[childrenIndices[[index]]]]$transmissionTree)
+    }
+  }
+  phyloAndTransTreeCopy
+}
+
+
