@@ -1,3 +1,40 @@
+#' Clusters SARS-Cov-2 sequencing data
+#'
+#' The function uses MCMC to produce cluster estimates based on sequencing data and covariate information. The function automatically derives suitable starting values for all parameters.
+#'
+#' @param DNAbinData DNAbin object, the sequencing data,
+#' @param rootSequenceName Name of the sequence used to root the tree, has to match a name in DNAbinData
+#' @param clusterRegion optional string indicating region for which clusters should be computed; if left NULL, only chain results are returned
+#' @param covariateFrame (ignored for now) data.frame containing covariate values in the order of elements in DNAbinData, used for scoring sample partitions
+#' @param seqsTimestampsPOSIXct named vector of sequence collection times, with names matching sequence names in DNAbinData
+#' @param epidemicRootTimePOSIXct POSIXct value, date on which epidemic started; affects the transmission tree topology prior; keep NULL to ignore,
+#' @param seqsRegionStamps named vector of region labels for sequences, with names matching sequence names in DNAbinData
+#' @param perSiteClockRate fixed mutation rate in nucleotide substitution per site per year
+#' @param startingValuePhylo (optional) phylo object, starting value for the phylogeny
+#' @param evoParsList (optional) list of values for the evolutionary parameters used in the likelihood function specified in control$logLikFun, see for example ?ape::pml
+#' @param clusterScoringFun (ignored for now) function with four arguments (in order): cluster labels (numeric), phylogeny (phylo) genotyping data (DNAbin), covariate information (data.frame).
+#' @param control List of control parameters, cf. findBayesianClusters.control
+#'
+#' @details By default, the function uses `phangorn::pml` to compute log-likelihoods, and `phangorn::optim.pml` to obtain a starting value for the phylogeny. The function then fixes the evolutionary parameters at their ML value. The user can input their own phylogenetic likelihood function with `control$logLikFun`. In that case however, values will also have to be provided for `startingValuesPhylo` and `evoParsList`.
+#'
+#' We strongly recommend setting `control$MCMC.control$folderToSaveIntermediateResults`. Running a reasonably long chain on a sample of a moderate size, e.g. 2,000, will take at least a number of days: that option allows the user to interrupt and resume a run. Each chain is assigned a glyph: its value is specified in the function's printout, e.g.
+#' "Chain is called Ph9t7z. Specify this string in MCMC.control if you want to resume simulations."
+#'
+#' You can find cluster estimates from any tree in `chain` and for any region by using the `getRegionClusters` function.
+#'
+#' @return A list with two elements
+#' \itemize{
+#' \item{`chain`}{list giving the thinned chain results,}
+#' \item{`MAPclusters`}{vector giving the cluster membership indices for sequences in region clusterRegion based on the maximum posterior probability tree; a 0 indicates that a sequence is not in that region.}
+#' }
+#'
+#' @examples
+#' \dontrun{
+#' # See example in vignette.
+#' }
+#' @export
+
+
 covidCluster <- function(
   DNAbinData,
   outgroup,
@@ -7,10 +44,13 @@ covidCluster <- function(
   epidemicRootTimePOSIXct = NULL,
   folderForMrBayesFiles = NULL,
   seqsRegionStamps = rep(1, ifelse(is.matrix(DNAbinData), nrow(DNAbinData), length(DNAbinData))),
-  perSiteClockRate,
+  perSiteClockRate = NULL,
+  clusteringCriterion = c("mrca", "cophenetic", "consecutive"),
+  distLimit = NULL,
   control = list(),
   MrBayes.control = gen.MrBayes.control(),
   priors.control = gen.priors.control()) {
+  clusteringCriterion <- clusteringCriterion[[1]]
   outgroupPos <- match(outgroup, rownames(DNAbinData))
   rownames(DNAbinData) <- .editTaxonNames(rownames(DNAbinData))
   names(seqsTimestampsPOSIXct) <- .editTaxonNames(names(seqsTimestampsPOSIXct))
@@ -44,11 +84,34 @@ covidCluster <- function(
   mergedChains <- do.call("c", treeSamples)
   unstandardisedWeights <- (parameterValues$logLik + parameterValues$logPrior)
   standardisedWeights <- unstandardisedWeights/sum(unstandardisedWeights)
-  .computeClusMembershipDistribution(phyloList = mergedChains, logWeights =  standardisedWeights, timestamps = seqsTimestampsPOSIXct, regionStamps = seqsRegionStamps, clockRate = perSiteClockRate, rootTime = estRootTime, covidCluster.control = control, priors.control = priors.control)
+  subtreeClusterFun <- function(phyloAndTransTree, subtreeIndex) {
+    numTips <- length(phyloAndTransTree$tip.label)
+    tipsInSubtreeAndRegion <- which((sapply(phyloAndTransTree$tip.label, "[[", "region") == clusterRegion) & sapply(phyloAndTransTree$tip.label, "[[", "subtreeIndex") == subtreeIndex)
+    seqNames <- sapply(tipsInSubtreeAndRegion, function(tipNum) phyloAndTransTree$tip.label[[tipNum]]$name)
+    output <- seq_along(seqNames)
+    names(output) <- seqNames
+    if (identical(phyloAndTransTree$node.label[[phyloAndTransTree$LambdaList[[subtreeIndex]]$rootNodeNum - numTips]]$region, clusterRegion)) {
+      clusterList <- getDistanceBasedClusters(phyloAndTransTree = phyloAndTransTree, subtreeIndex = subtreeIndex, distLimit = distLimit, regionLabel = clusterRegion, criterion = clusteringCriterion) #### FIX ME ######
+      output <- .convertClusterListToVecOfIndices(clusterList, seqNames)
+    }
+    output
+  }
+
+  .computeClusMembershipDistribution(phyloList = mergedChains, targetRegion = clusterRegion, logWeights =  standardisedWeights, timestamps = seqsTimestampsPOSIXct, regionStamps = seqsRegionStamps, clockRate = perSiteClockRate, rootTime = estRootTime, subtreeClusterFun = subtreeClusterFun, covidCluster.control = control, priors.control = priors.control)
 }
 
-gen.covidCluster.control <- function(lengthForNullExtBranchesInPhylo = 1e-8) {
-  list(lengthForNullExtBranchesInPhylo = lengthForNullExtBranchesInPhylo)
+gen.covidCluster.control <- function(lengthForNullExtBranchesInPhylo = 1e-8, numReplicatesForClusMemScoring = 5000) {
+  list(lengthForNullExtBranchesInPhylo = lengthForNullExtBranchesInPhylo, numReplicatesForClusMemScoring = numReplicatesForClusMemScoring)
+}
+
+.convertClusterListToVecOfIndices <- function(clusterList, seqNames) {
+  clusterNums <- seq_along(clusterList)
+  clusterVec <- rep(0, length(seqNames))
+  names(clusterVec) <- seqNames
+  for (clusNumber in clusterNums) {
+    clusterVec[clusterList[[clusNumber]]] <- clusNumber
+  }
+  clusterVec
 }
 
 # The default run uses the following parameters:
@@ -71,17 +134,15 @@ gen.priors.control <- function() {
  list()
 }
 
-.computeClusMembershipDistribution <- function(phyloList, logWeights, timestamps, regionStamps, clockRate, rootTime, covidCluster.control, priors.control) {
+.computeClusMembershipDistribution <- function(phyloList, targetRegion, logWeights, timestamps, regionStamps, clockRate, rootTime, subtreeClusterFun, covidCluster.control, priors.control) {
   timestampsInDays <- as.numeric(timestamps)/86400
   names(timestampsInDays) <- names(timestamps)
   phyloAndTransTreeList <- lapply(phyloList, .genStartPhyloAndTransTree, timestampsInDays = timestampsInDays, regionStamps = regionStamps, logClockRatePriorMean = clockRate, estRootTime = rootTime, control = covidCluster.control)
+  # WE
 
-  regionClusterFun <- function(x, regionIndex) {
-    # TO_DO
-  }
   funToComputeDistribCondOnPhylo <- function(index) {
     logScalingFactor <- logWeights[[index]]
-    distrib <- .computeCondClusterScore(phyloAndTransTree = phyloAndTransTreeList[[index]], regionClusterFun = regionClusterFun, estRootTime = rootTime)
+    distrib <- .computeCondClusterScore(phyloAndTransTree = phyloAndTransTreeList[[index]], subtreeClusterFun = subtreeClusterFun, estRootTime = rootTime, control = covidCluster.control)
     for (i in seq_along(distrib)) {
       distrib[[i]]$logScore <- distrib[[i]]$logScore + logScalingFactor
     }
@@ -122,17 +183,20 @@ gen.priors.control <- function() {
   list(logLik = mergedTables$LnL, logPrior = mergedTables$LnPr, treeLength = mergedTables$TL, evoPars = mergedTables[ , -(1:4)])
 }
 
-# regionClusterFun is a function that takes a phyloAndTransTree object and a region index and produces a vector of cluster membership indices.
+# subtreeClusterFun is a function that takes a phyloAndTransTree object and a region index and produces a vector of cluster membership indices.
 
-.computeCondRegionClusterScore <- function(phyloAndTransTree, regionIndex, regionClusterFun, n = 5000, estRootTime, control) {
+.computeCondClusterScoreBySubtree <- function(phyloAndTransTree, subtreeClusterFun, n = 5000, estRootTime, control) {
  funToReplicate <- function(phyloAndTransTree) {
-   newTree <- .nodeTimesSubtreeTransFun(phyloAndTransTree, regionIndex, control)
-   subtreeScore <- .nodeTimesSubtreeLogPriorFun(newTree, regionIndex, estRootTime, control)
-   clustering <- regionClusterFun(newTree, regionIndex)
-   list(clusters = clustering, logScore = subtreeScore)
+   newTree <- .simulateNodeTimes(phyloAndTransTree)
+   subtreeScoresBySubtree <- sapply(seq_along(newTree$LambdaList), .nodeTimesSubtreeLogPriorFun, phyloAndTransTree = newTree, estRootTime = estRootTime, control = control)
+   clustersBySubtree <- sapply(seq_along(newTree$LambdaList), subtreeClusterFun, phyloAndTransTree = newTree)
+   lapply(seq_along(clustersBySubtree), function(index) list(clusters = clustersBySubtree[[index]], logScore = subtreeScoresBySubtree[[index]]))
  }
- sampledClustersAndScores <- replicate(n = n, funToReplicate(phyloAndTransTree), simplify = FALSE)
- .obtainClusMembershipDistrib(sampledClustersAndScores)
+ sampledClustersAndScores <- replicate(n = control$numReplicatesForClusMemScoring, funToReplicate(phyloAndTransTree), simplify = FALSE)
+ sampledClustersAndScoresBySubtree <- lapply(seq_along(sampledClustersAndScores[[1]]), function(subtreeIndex) {
+   lapply(seq_along(sampledClustersAndScores), function(replicateIndex) list(clusters = sampledClustersAndScores[[replicateIndex]][[subtreeIndex]]$clusters, logScore = sampledClustersAndScores[[replicateIndex]][[subtreeIndex]]$logScore))
+ })
+ lapply(sampledClustersAndScoresBySubtree, .obtainClusMembershipDistrib)
 }
 
 .obtainClusMembershipDistrib <- function(clustersAndScoresList) {
@@ -147,23 +211,23 @@ gen.priors.control <- function() {
   lapply(seq_along(clusterMembershipVecs), function(index) list(config = clusterMembershipVecs[[index]], logScore = clusterLogScores[[index]]))
 }
 
-.computeCondClusterScore <- function(phyloAndTransTree, regionClusterFun, estRootTime, control) {
+.computeCondClusterScore <- function(phyloAndTransTree, subtreeClusterFun, estRootTime, control) {
   n <- control$numReplicatesForClusMemScoring
-  clustersAndScoresByRegion <- lapply(seq_along(phyloAndTransTree$LambdaList), .computeCondRegionClusterScore, phyloAndTransTree = phyloAndTransTree, regionClusterFun = regionClusterFun, n = n, estRootTime = estRootTime, control = control)
-  .combineRegionalEstimatesAndScores(clustersAndScoresByRegion)
+  clustersAndScoresBySubtree <- .computeCondClusterScoreBySubtree(phyloAndTransTree = phyloAndTransTree, subtreeClusterFun = subtreeClusterFun, n = n, estRootTime = estRootTime, control = control)
+  .combineRegionalEstimatesAndScores(clustersAndScoresBySubtree)
 }
 
-.combineRegionalEstimatesAndScores <- function(clusterDistribsByRegion) {
-  numConfigsByRegion <- sapply(clusterDistribsByRegion, "length")
-  listForExpandGrid <- lapply(numConfigsByRegion, function(x) 1:x)
+.combineRegionalEstimatesAndScores <- function(clusterDistribsBySubtree) {
+  numConfigsBySubtree <- sapply(clusterDistribsBySubtree, "length")
+  listForExpandGrid <- lapply(numConfigsBySubtree, function(x) 1:x)
   indicesToCombine <- expand.grid(listForExpandGrid)
   lapply(1:nrow(indicesToCombine), function(rowIndex) {
     elementsToSelect <- indicesToCombine[rowIndex, ]
     logScore <- sum(sapply(seq_along(elementsToSelect), function(elementIndex) {
-      clusterDistribsByRegion[[elementIndex]][[elementsToSelect[[elementIndex]]]]$logScore
+      clusterDistribsBySubtree[[elementIndex]][[elementsToSelect[[elementIndex]]]]$logScore
     }))
     combinedClusMembership <- do.call("c", lapply(seq_along(elementsToSelect), function(elementIndex) {
-      clusterDistribsByRegion[[elementIndex]][[elementsToSelect[[elementIndex]]]]$config
+      clusterDistribsBySubtree[[elementIndex]][[elementsToSelect[[elementIndex]]]]$config
     }))
     list(config = combinedClusMembership, logScore = logScore)
   })
@@ -216,8 +280,28 @@ computeLogSum <- function(logValues) {
   }
   phyloAndTransTree <- .identifyNodeRegions(phyloAndTransTree)
   # Initialises transmission tree branch lengths conditional on phylogenetic branch lengths and an equal clock rate across branches
+  subtreeRootNodes <- .computeSubtreeRootNums(phyloAndTransTree)
+  subtreeRootNodeDepths <- sapply(subtreeRootNodes, function(nodeNum) length(phangorn::Ancestors(phyloAndTransTree, nodeNum, "all")) + 1)
+  updateOrder <- order(subtreeRootNodeDepths)
+  subtreeRootNodes <- subtreeRootNodes[updateOrder]
 
-  phyloAndTransTree <- .computeCoalRatesAddSubtreeIndex(phyloAndTransTree, estRootTime = estRootTime, control = control)
+  for (subtreeIndex in seq_along(subtreeRootNodes)) {
+    nodeNum <- subtreeRootNodes[[subtreeIndex]]
+    phyloAndTransTree$node.label[[nodeNum - ape::Ntip(phyloAndTransTree)]]$subtreeIndex <- subtreeIndex
+    for (descNodeNum in phangorn::Descendants(phyloAndTransTree, nodeNum, "all")) {
+      if (descNodeNum <= ape::Ntip(phyloAndTransTree)) {
+        phyloAndTransTree$tip.label[[descNodeNum]]$subtreeIndex <- subtreeIndex
+      } else {
+        phyloAndTransTree$node.label[[descNodeNum - ape::Ntip(phyloAndTransTree)]]$subtreeIndex <- subtreeIndex
+      }
+    }
+  }
+  phyloAndTransTree$LambdaList <- lapply(seq_along(subtreeRootNodes), function(i) list(Lambda = NULL, rootNodeNum = subtreeRootNodes[[i]]))
+  coalRates <- sapply(seq_along(phyloAndTransTree$LambdaList), .computeCoalRateSubtree, phyloAndTransTree = phyloAndTransTree)
+
+  for (i in seq_along(coalRates)) {
+    phyloAndTransTree$LambdaList[[i]]$Lambda <- coalRates[[i]]
+  }
   phyloAndTransTree
 }
 
@@ -233,7 +317,7 @@ computeLogSum <- function(logValues) {
     } else {
       childrenNums <- phyloAndTransTree$edge[which(phyloAndTransTree$edge[ , 1] == nodeNum), 2]
     }
-    introForMerge <- phyloAndTransTree$node.label[[nodeNum - length(phyloAndTransTree$tip.label)]]$region
+    introForMerge <- phyloAndTransTree$node.label[[nodeNum - length(phyloAndTransTree$tip.label)]]$subtreeIndex
     minChildrenTimes <- min(sapply(childrenNums, function(childNum) {
       returnTime <- NULL
       if (childNum <= numTips) {
@@ -243,7 +327,67 @@ computeLogSum <- function(logValues) {
       }
       returnTime
     }))
-    phyloAndTransTree$node.label[[nodeNum]]$time <- minChildrenTimes - rexp(n = 1, rate = baseRatePerIntroduction[[introForMerge]])
+    phyloAndTransTree$node.label[[nodeNum - numTips]]$time <- minChildrenTimes - rexp(n = 1, rate = baseRatePerIntroduction[[introForMerge]])
   }
+  phyloAndTransTree <- .addTransTreeEdgeLengths(phyloAndTransTree)
   phyloAndTransTree
+}
+
+# .computeCoalRates <- function(phyloAndTransTree, estRootTime, control) {
+#   phyloAndTransTree$LambdaList <- lapply(seq_along(subtreeRootNodes), function(i) list(rootNodeNum = subtreeRootNodes[[i]])) # Needed for .computeMeanCoalRateSubtree.
+#   rateBySubtree <- sapply(seq_along(subtreeRootNodes), .computeMeanCoalRateSubtree, phyloAndTransTree = phyloAndTransTree)
+#   phyloAndTransTree$LambdaList <- lapply(seq_along(rateBySubtree), function(i) list(Lambda = rateBySubtree[[i]], rootNodeNum = subtreeRootNodes[[i]], priorMean = rateBySubtree[[i]]))
+#   funToOptimise <- function(logLambdaValue, subtreeIndex) {
+#     phyloAndTransTree$LambdaList[[subtreeIndex]]$Lambda <- exp(logLambdaValue)
+#     -(.nodeTimesSubtreeLogPriorFun(phyloAndTransTree, subtreeIndex = subtreeIndex, estRootTime = estRootTime, control = control) + .coalescenceRateLogPriorFun(phyloAndTransTree = phyloAndTransTree, index = subtreeIndex, control = control))
+#   }
+#   optimLambdas <- sapply(seq_along(rateBySubtree), function(index) {
+#     optimValue <- nloptr::lbfgs(x0 = log(rateBySubtree[[index]]), fn = funToOptimise, lower = -20, subtreeIndex = index)
+#     exp(optimValue$par)
+#   })
+#   # LogNormPars <- lapply(rateBySubtree, function(rateValue) computeLogNormMMpars(meanValue = rateValue, varValue = (control$MCMC.control$coalescentPriorCoefVar * rateValue)^2))
+#   phyloAndTransTree$LambdaList <- lapply(seq_along(rateBySubtree), function(i) list(Lambda = optimLambdas[[i]], rootNodeNum = subtreeRootNodes[[i]], priorMean = rateBySubtree[[i]]))
+#
+#   phyloAndTransTree
+# }
+
+.computeCoalRateSubtree <- function(phyloAndTransTree, subtreeIndex) {
+  subtreeRootNum <- phyloAndTransTree$LambdaList[[subtreeIndex]]$rootNodeNum
+  subtreeRegion <- phyloAndTransTree$node.label[[subtreeRootNum - length(phyloAndTransTree$tip.label)]]$region
+  timesToConsider <- 0
+  nodeOrTip <- "node"
+  verticesToReview <- subtreeRootNum
+  index <- 1
+  phyloAndTransTreeCopy <- phyloAndTransTree
+  phyloAndTransTreeCopy$node.label[[subtreeRootNum - length(phyloAndTransTreeCopy$tip.label)]]$time <- 0
+  repeat {
+    vertexNum <- verticesToReview[[index]]
+    currentTime <- phyloAndTransTreeCopy$node.label[[vertexNum - length(phyloAndTransTreeCopy$tip.label)]]$time
+    childrenNums <- phangorn::Children(phyloAndTransTree, vertexNum)
+    matchingBranchNums <- match(childrenNums, phyloAndTransTreeCopy$edge[ , 2])
+    transTreeBranchLengths <- sapply(matchingBranchNums, function(edgeNum) phyloAndTransTreeCopy$edge.length[[edgeNum]]$phylogeny/exp(phyloAndTransTreeCopy$edge.length[[edgeNum]]$logXi))
+    childrenTimes <- currentTime + transTreeBranchLengths
+    timesToConsider <- c(timesToConsider, childrenTimes)
+    for (i in seq_along(childrenTimes)) {
+      if (childrenNums[[i]] > length(phyloAndTransTreeCopy$tip.label)) {
+        phyloAndTransTreeCopy$node.label[[childrenNums[[i]] - length(phyloAndTransTreeCopy$tip.label)]]$time <- childrenTimes[[i]]
+      } # No need to update tip times...
+    }
+    childrenRegions <- sapply(childrenNums, function(childNum) .getVertexLabel(phyloAndTransTreeCopy, childNum)$region)
+    addChildToReviewVec <- (childrenRegions == subtreeRegion) & (childrenNums > ape::Ntip(phyloAndTransTreeCopy))
+    childrenStatus <- ifelse(addChildToReviewVec, "node", "tip") # A child in region y whose parent is in region x is the root of another subtree, and will be classified as such. At the same time, that child corresponds to a tip in the supporting tree. A tip is a tip, notwithstanding the region it belongs to. This will affect the computation of the prior mean.
+    nodeOrTip <- c(nodeOrTip, childrenStatus)
+    verticesToReview <- c(verticesToReview, childrenNums[addChildToReviewVec])
+    index <- index + 1
+    if (index > length(verticesToReview)) break
+  }
+  LambdaStart <- phyloAndTransTree$LambdaList[[subtreeIndex]]$priorMean
+  if (is.null(LambdaStart)) { # We're initialising LambdaList...
+    LambdaStart <- sum(nodeOrTip == "node")/(max(timesToConsider) - min(timesToConsider))
+  }
+  optimResult <- nloptr::lbfgs(x0 = log(LambdaStart), fn = function(x) -.funForLambdaOptim(logLambda = x,  times = timesToConsider, nodeOrTip = nodeOrTip), lower = log(LambdaStart) - 100)
+  if (optimResult$convergence < 1) {
+    warning("Convergence issue with the estimation of the mean of the prior for coalescence rates! \n")
+  }
+  exp(optimResult$par)
 }
