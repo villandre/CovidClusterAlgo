@@ -91,8 +91,11 @@ covidCluster <- function(
     output <- seq_along(seqNames)
     names(output) <- seqNames
     if (identical(phyloAndTransTree$node.label[[phyloAndTransTree$LambdaList[[subtreeIndex]]$rootNodeNum - numTips]]$region, clusterRegion)) {
-      clusterList <- getDistanceBasedClusters(phyloAndTransTree = phyloAndTransTree, subtreeIndex = subtreeIndex, distLimit = distLimit, regionLabel = clusterRegion, criterion = clusteringCriterion) #### FIX ME ######
-      output <- .convertClusterListToVecOfIndices(clusterList, seqNames)
+      clusterList <- getDistanceBasedClusters(phyloAndTransTree = phyloAndTransTree, subtreeIndex = subtreeIndex, distLimit = distLimit, regionLabel = clusterRegion, criterion = clusteringCriterion)
+      output <- integer(0)
+      if (length(clusterList) > 0) {
+        output <- .convertClusterListToVecOfIndices(clusterList, seqNames)
+      }
     }
     output
   }
@@ -100,8 +103,8 @@ covidCluster <- function(
   .computeClusMembershipDistribution(phyloList = mergedChains, targetRegion = clusterRegion, logWeights =  standardisedWeights, timestamps = seqsTimestampsPOSIXct, regionStamps = seqsRegionStamps, clockRate = perSiteClockRate, rootTime = estRootTime, subtreeClusterFun = subtreeClusterFun, covidCluster.control = control, priors.control = priors.control)
 }
 
-gen.covidCluster.control <- function(lengthForNullExtBranchesInPhylo = 1e-8, numReplicatesForClusMemScoring = 5000) {
-  list(lengthForNullExtBranchesInPhylo = lengthForNullExtBranchesInPhylo, numReplicatesForClusMemScoring = numReplicatesForClusMemScoring)
+gen.covidCluster.control <- function(lengthForNullExtBranchesInPhylo = 1e-8, numReplicatesForClusMemScoring = 5000, clusIndReportDomainSize = 10) {
+  list(lengthForNullExtBranchesInPhylo = lengthForNullExtBranchesInPhylo, numReplicatesForClusMemScoring = numReplicatesForClusMemScoring, clusIndReportDomainSize = clusIndReportDomainSize)
 }
 
 .convertClusterListToVecOfIndices <- function(clusterList, seqNames) {
@@ -126,8 +129,8 @@ gen.covidCluster.control <- function(lengthForNullExtBranchesInPhylo = 1e-8, num
 # Chain characteristics are printed once every 500 iterations (printfreq = 500)
 # The first 20% of iterations are discarded as a burn in (burninfrac = 0.2)
 
-gen.MrBayes.control <- function(MrBayesShellCommand = "mb", nst = 6, rates = "invgamma", ngammacat = 4, nruns = 2, nchains = 4, ngen = 1000000, samplefreq = 1000, diagnfreq = 5000, printfreq = 500, burninfrac = 0.2, beaglesse = "yes", usebeagle = "no", beaglescaling = "dynamic") {
-  list(MrBayesShellCommand = MrBayesShellCommand, nst = nst, rates = rates, ngammacat = ngammacat, nruns = nruns, nchains = nchains, ngen = ngen, samplefreq = samplefreq, diagnfreq = diagnfreq, printfreq = printfreq, burninfrac = burninfrac, beaglesse = beaglesse, usebeagle = usebeagle, beaglescaling = beaglescaling)
+gen.MrBayes.control <- function(MrBayesShellCommand = "mb", nst = 6, rates = "invgamma", ngammacat = 4, nruns = 2, nchains = 4, ngen = 1000000, samplefreq = 1000, diagnfreq = 5000, printfreq = 500, burninfrac = 0.2, beaglesse = "yes", usebeagle = "no", beaglescaling = "dynamic", seed = 42, swapseed = 1) {
+  list(MrBayesShellCommand = MrBayesShellCommand, nst = nst, rates = rates, ngammacat = ngammacat, nruns = nruns, nchains = nchains, ngen = ngen, samplefreq = samplefreq, diagnfreq = diagnfreq, printfreq = printfreq, burninfrac = burninfrac, beaglesse = beaglesse, usebeagle = usebeagle, beaglescaling = beaglescaling, seed = seed, swapseed = swapseed)
 }
 
 gen.priors.control <- function() {
@@ -174,7 +177,7 @@ gen.priors.control <- function() {
 }
 
 .produceMrBayesScript <- function(outgroup, nexusDataFilename, control = gen.MrBayes.control()) {
-  paste("begin mrbayes;\n set autoclose=yes nowarn=yes;\n execute ", nexusDataFilename, ";\n lset nst=", control$nst, " rates=", control$rates, ";\n outgroup ", outgroup, ";\n set usebeagle=", control$usebeagle, " beaglescaling=", control$beaglescaling," beaglesse=", control$beaglesse, ";\n mcmc nruns=", control$nruns, " nchains=", control$nchains, " ngen=", control$nchains, " samplefreq=", control$samplefreq, " diagnfreq=", control$diagnfreq, " printfreq=", control$printfreq, " append=no;\n sump relburnin=yes burninfrac=", control$burninfrac, ";\n end;", sep = "")
+  paste("begin mrbayes;\n set autoclose=yes nowarn=yes seed=", control$seed, " swapseed=", control$swapseed, ";\n execute ", nexusDataFilename, ";\n lset nst=", control$nst, " rates=", control$rates, ";\n outgroup ", outgroup, ";\n set usebeagle=", control$usebeagle, " beaglescaling=", control$beaglescaling," beaglesse=", control$beaglesse, ";\n mcmc nruns=", control$nruns, " nchains=", control$nchains, " ngen=", control$nchains, " samplefreq=", control$samplefreq, " diagnfreq=", control$diagnfreq, " printfreq=", control$printfreq, " append=no;\n sump relburnin=yes burninfrac=", control$burninfrac, ";\n end;", sep = "")
 }
 
 .formatParameterFiles <- function(filenames) {
@@ -188,8 +191,14 @@ gen.priors.control <- function() {
 .computeCondClusterScoreBySubtree <- function(phyloAndTransTree, subtreeClusterFun, n = 5000, estRootTime, control) {
  funToReplicate <- function(phyloAndTransTree) {
    newTree <- .simulateNodeTimes(phyloAndTransTree)
-   subtreeScoresBySubtree <- sapply(seq_along(newTree$LambdaList), .nodeTimesSubtreeLogPriorFun, phyloAndTransTree = newTree, estRootTime = estRootTime, control = control)
    clustersBySubtree <- sapply(seq_along(newTree$LambdaList), subtreeClusterFun, phyloAndTransTree = newTree)
+   subtreeScoresBySubtree <- sapply(seq_along(newTree$LambdaList), function(subtreeIndex) {
+     output <- NA
+     if (length(clustersBySubtree[[subtreeIndex]]) > 0) {
+      output <- .nodeTimesSubtreeLogPriorFun(phyloAndTransTree = newTree, estRootTime = estRootTime, subtreeIndex = subtreeIndex, control = control)
+     }
+     output
+   })
    lapply(seq_along(clustersBySubtree), function(index) list(clusters = clustersBySubtree[[index]], logScore = subtreeScoresBySubtree[[index]]))
  }
  sampledClustersAndScores <- replicate(n = control$numReplicatesForClusMemScoring, funToReplicate(phyloAndTransTree), simplify = FALSE)
@@ -201,11 +210,10 @@ gen.priors.control <- function() {
 
 .obtainClusMembershipDistrib <- function(clustersAndScoresList) {
   clusterMembershipVecs <- lapply(clustersAndScoresList, function(listElement) {
-    adjMat <- .getAdjacencyFromVec(listElement$clusters)
-    .clusterIndicesFromAdjMat(adjMat) # This is to ensure that cluster membership vectors for identical adjacency matrices are also identical.
+    .standardiseClusterIndices(listElement$clusters) # As elements of the list are replicates, re-ordering listElement$clusters should not be required.
   })
   clusterCodes <- factor(sapply(clusterMembershipVecs, digest::digest))
-  associatedScores <- sapply(clustersAndScoresList, "[[", "score")
+  associatedScores <- sapply(clustersAndScoresList, "[[", "logScore")
   clusterLogScores <- tapply(associatedScores, list(clusterCodes), FUN = "computeLogSum")
   clusterMembershipVecs <- lapply(split(clusterMembershipVecs, f = clusterCodes), "[[", 1)
   lapply(seq_along(clusterMembershipVecs), function(index) list(config = clusterMembershipVecs[[index]], logScore = clusterLogScores[[index]]))
@@ -217,20 +225,17 @@ gen.priors.control <- function() {
   .combineRegionalEstimatesAndScores(clustersAndScoresBySubtree)
 }
 
-.combineRegionalEstimatesAndScores <- function(clusterDistribsBySubtree) {
-  numConfigsBySubtree <- sapply(clusterDistribsBySubtree, "length")
-  listForExpandGrid <- lapply(numConfigsBySubtree, function(x) 1:x)
-  indicesToCombine <- expand.grid(listForExpandGrid)
-  lapply(1:nrow(indicesToCombine), function(rowIndex) {
-    elementsToSelect <- indicesToCombine[rowIndex, ]
-    logScore <- sum(sapply(seq_along(elementsToSelect), function(elementIndex) {
-      clusterDistribsBySubtree[[elementIndex]][[elementsToSelect[[elementIndex]]]]$logScore
-    }))
-    combinedClusMembership <- do.call("c", lapply(seq_along(elementsToSelect), function(elementIndex) {
-      clusterDistribsBySubtree[[elementIndex]][[elementsToSelect[[elementIndex]]]]$config
-    }))
-    list(config = combinedClusMembership, logScore = logScore)
-  })
+.combineRegionalEstimatesAndScores <- function(clusterDistribsBySubtree, control = NULL) {
+  subtreesToKeep <- which(sapply(clusterDistribsBySubtree, function(listElement) {
+    length(listElement[[1]]$config) > 0
+  }))
+  logScoresToBySubtree <- lapply(clusterDistribsBySubtree[subtreesToKeep], function(listElement) sapply(listElement, "[[" ,"logScore"))
+  listWithIndicesAndLogScores <- .sortNumberListDecreasing(logScoresToBySubtree, control$clusIndReportDomainSize) # Each element of the list is itself a list, with two elements: a vector of indices (giving the vector of indices to select for each subtree to form the complete cluster membership indices vector) and the associated log-score.
+  concatenateClusInd <- function(listElement) {
+    clusIndList <- lapply(seq_along(subtreesToKeep), function(i) clusterDistribsBySubtree[[subtreesToKeep[[i]]]][[listElement$configIndexVec[[i]]]]$config)
+    list(config = .combineClusMembershipIndices(clusIndList), logScore = listElement$logScore)
+  }
+  lapply(listWithIndicesAndLogScores, concatenateClusInd)
 }
 
 .clusterIndicesFromAdjMat <- function(adjacencyMatrix) {
@@ -390,4 +395,53 @@ computeLogSum <- function(logValues) {
     warning("Convergence issue with the estimation of the mean of the prior for coalescence rates! \n")
   }
   exp(optimResult$par)
+}
+
+.combineClusMembershipIndices <- function(clusIndList) {
+  modClusIndList <- lapply(clusIndList, function(x) {
+    output <- as.numeric(as.factor(x))
+    names(output) <- names(x)
+    output
+  })
+  offsetValue <- cumsum(sapply(2:length(modClusIndList), max))
+  for (i in 2:length(modClusIndList)) {
+    modClusIndList[[i]] <- modClusIndList[[i]] + offsetValue[[i - 1]]
+  }
+  modClusIndList
+}
+
+# We assume that the vector elements of listToSort do not contain ties.
+
+.sortNumberListDecreasing <- function(listToSort, numConfigs) {
+  if (all(sapply(listToSort, length) == 1)) {
+    return(list(list(configIndexVec = rep(1, length(listToSort)), logScore = Reduce("+", listToSort))))
+  }
+  numConfigs <- min(numConfigs, prod(sapply(listToSort, "length")))
+
+  configList <- accessibleValues <- vector(mode = "list", length = numConfigs)
+  configList[[1]] <- sapply(listToSort, which.max)
+  scoresVec <- numeric(numConfigs)
+  scoresVec[[1]] <- sum(sapply(seq_along(configList[[1]]), function(i) listToSort[[i]][[configList[[1]][[i]]]]))
+
+  for (i in 2:numConfigs) {
+    funForApplyFun <- function(subtreeIndex) {
+      originalValue <- listToSort[[subtreeIndex]][[configList[[i - 1]][[subtreeIndex]]]]
+      potentialValues <- listToSort[[subtreeIndex]]
+      scoreIncrements <- potentialValues - originalValue
+      scoreIncrements <- replace(scoreIncrements, which(scoreIncrements >= 0), -Inf) # To ensure we don't return those states anymore.
+      scoresVec[[i - 1]] + scoreIncrements
+    }
+    accessibleValues[[i - 1]] <- lapply(seq_along(configList[[i - 1]]), funForApplyFun)
+    maxValueFromEachConfig <- sapply(accessibleValues[1:(i - 1)], function(listElement) max(sapply(listElement, max)))
+    configFromWhichToMoveIndex <- which.max(maxValueFromEachConfig)
+    subtreeToChangeIndex <- which.max(sapply(accessibleValues[[configFromWhichToMoveIndex]], max))
+    elementToMoveToIndex <- which.max(accessibleValues[[configFromWhichToMoveIndex]][[subtreeToChangeIndex]])
+    configList[[i]] <- configList[[configFromWhichToMoveIndex]]
+    configList[[i]][[subtreeToChangeIndex]] <- elementToMoveToIndex
+    scoresVec[[i]] <- accessibleValues[[configFromWhichToMoveIndex]][[subtreeToChangeIndex]][[elementToMoveToIndex]]
+    accessibleValues[[configFromWhichToMoveIndex]][[subtreeToChangeIndex]][[elementToMoveToIndex]] <- -Inf
+  }
+  lapply(seq_along(configList), function(i) {
+    list(configIndexVec = configList[[i]], logScore = scoresVec[[i]])
+  })
 }

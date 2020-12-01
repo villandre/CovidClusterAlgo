@@ -571,7 +571,9 @@ getDistanceBasedClusters <- function(phyloAndTransTree, subtreeIndex = NULL, dis
   if (!is.null(subtreeIndex)) {
     subtreeRootNodeNum <- phyloAndTransTree$LambdaList[[subtreeIndex]]$rootNodeNum
     numTips <- length(phyloAndTransTree$tip.label)
-    if (phyloAndTransTree$node.label[[subtreeRootNodeNum - numTips]]$region != regionLabel) return(list()) # A cluster must be contained within an introduction into the target region.
+    subtreeRootCondition <- phyloAndTransTree$node.label[[subtreeRootNodeNum - numTips]]$region != regionLabel
+    subtreeTipsCondition <- !any((sapply(phyloAndTransTree$tip.label, "[[", "region") == regionLabel) & (sapply(phyloAndTransTree$tip.label, "[[", "subtreeIndex") == subtreeIndex)) # That condition should not be necessary...
+    if (subtreeRootCondition &  subtreeTipsCondition) return(list()) # A cluster must be contained within an introduction into the target region.
   }
   criterion <- criterion[[1]]
   if (!criterion %in% c("cophenetic", "mrca", "consecutive")) {
@@ -635,8 +637,10 @@ getDistanceBasedClusters <- function(phyloAndTransTree, subtreeIndex = NULL, dis
           # distances <- distances[allDescendantTipsRegions == regionLabel]
           if (length(descendantTips) > 1) {
             distances <- dist.tips.mrca(phylogeny = transmissionTree, tipNumbers = descendantTips)
-          } else {
+          } else if (length(descendantTips) == 1) {
             distances <- 0 # We're dealing with a singleton. Should be noted as such.
+          } else {
+            distances <- Inf # This is an internal node whose descended tips are in the wrong subtree/region.
           }
         } else if (identical(criterion, "consecutive")) {
           cladeSubTree <- ape::extract.clade(transmissionTree, node = nodeNumber)
@@ -654,7 +658,7 @@ getDistanceBasedClusters <- function(phyloAndTransTree, subtreeIndex = NULL, dis
         }
         if (all(distances < distLimit)) {
           clusterList[[length(clusterList) + 1]] <- sapply(descendantTips, function(x) transmissionTree$tip.label[[x]]$name)
-          incrementNodesToCheckFlag <- FALSE
+          incrementNodesToCheckFlag <- FALSE # Cluster has been found: stop exploring that section of the tree.
         }
         if (length(distances) == 0) incrementNodesToCheckFlag <- FALSE
       }
@@ -667,7 +671,7 @@ getDistanceBasedClusters <- function(phyloAndTransTree, subtreeIndex = NULL, dis
         childrenSubtrees <- sapply(nodeChildren, function(vertexNum) .getVertexLabel( phylogeny = transmissionTree, vertexNum = vertexNum)$subtreeIndex)
         keepChild <- keepChild & (childrenSubtrees == subtreeIndex)
       }
-      nodesToCheck <- c(nodesToCheck, nodeChildren[[keepChild]])
+      nodesToCheck <- c(nodesToCheck, nodeChildren[keepChild])
     }
 
     nodesToCheck <- nodesToCheck[-1]
@@ -919,4 +923,19 @@ getPhyloEdgeLengths <- function(phyloAndTransTree) {
 
 getNodeTimes <- function(phyloAndTransTree) {
   sapply(phyloAndTransTree$node.label, "[[", "time")
+}
+
+.standardiseClusterIndices <- function(clusInd) {
+  if (length(clusInd) == 0) return(clusInd)
+  newClusInd <- clusInd
+  numIndices <- length(unique(clusInd))
+  assignedIndices <- rep(FALSE, length(clusInd))
+  for (i in 1:numIndices) {
+    position <- match(FALSE, assignedIndices)
+    valueAtPos <- clusInd[[position]]
+    posToChange <- which(clusInd == valueAtPos)
+    assignedIndices[posToChange] <- TRUE
+    newClusInd[posToChange] <- i
+  }
+  newClusInd
 }
