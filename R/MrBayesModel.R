@@ -103,8 +103,8 @@ covidCluster <- function(
   .computeClusMembershipDistribution(phyloList = mergedChains, targetRegion = clusterRegion, logWeights =  standardisedWeights, timestamps = seqsTimestampsPOSIXct, regionStamps = seqsRegionStamps, clockRate = perSiteClockRate, rootTime = estRootTime, subtreeClusterFun = subtreeClusterFun, covidCluster.control = control, priors.control = priors.control)
 }
 
-gen.covidCluster.control <- function(lengthForNullExtBranchesInPhylo = 1e-8, numReplicatesForClusMemScoring = 5000, clusIndReportDomainSize = 10) {
-  list(lengthForNullExtBranchesInPhylo = lengthForNullExtBranchesInPhylo, numReplicatesForClusMemScoring = numReplicatesForClusMemScoring, clusIndReportDomainSize = clusIndReportDomainSize)
+gen.covidCluster.control <- function(lengthForNullExtBranchesInPhylo = 1e-8, numReplicatesForClusMemScoring = 5000, clusIndReportDomainSize = 10, numThreads = 1) {
+  list(lengthForNullExtBranchesInPhylo = lengthForNullExtBranchesInPhylo, numReplicatesForClusMemScoring = numReplicatesForClusMemScoring, clusIndReportDomainSize = clusIndReportDomainSize, numThreads = numThreads)
 }
 
 .convertClusterListToVecOfIndices <- function(clusterList, seqNames) {
@@ -153,12 +153,15 @@ gen.priors.control <- function() {
   }
   distribCondOnPhyloList <- lapply(seq_along(phyloAndTransTreeList), funToComputeDistribCondOnPhylo)
   combinedDistribs <- do.call("c", distribCondOnPhyloList)
-
+  namesForOrder <- names(combinedDistribs[[1]]$config)
+  for (i in seq_along(combinedDistribs)) {
+    combinedDistribs[[i]]$config <- .standardiseClusterIndices(combinedDistribs[[i]]$config[namesForOrder])
+  }
   # Now we have each element of the sum to obtain p(c | y). We must now identify all identical partitions and sum their scores to produce the final distribution, which also will be a long list whose elements are lists with two elements, config, the cluster membership vector, and logScore, the logarithm of its posterior probability.
 
   digestCodes <- sapply(combinedDistribs, function(listElement) digest::digest(listElement$config))
   logScores <- sapply(combinedDistribs, "[[", "logScore")
-  combinedScores <- tapply(logScores, INDEX = factor(digestCodes), FUN = "logSum")
+  combinedScores <- tapply(logScores, INDEX = factor(digestCodes), FUN = "computeLogSum")
   clusterMembershipVecs <- lapply(combinedDistribs, "[[", "config")
   uniqueClusMembershipVecs <- lapply(split(clusterMembershipVecs, f = factor(digestCodes)), "[[", 1)
   lapply(seq_along(uniqueClusMembershipVecs), function(index) list(config = uniqueClusMembershipVecs[[index]], logScore = combinedScores[[index]]))
@@ -177,7 +180,7 @@ gen.priors.control <- function() {
 }
 
 .produceMrBayesScript <- function(outgroup, nexusDataFilename, control = gen.MrBayes.control()) {
-  paste("begin mrbayes;\n set autoclose=yes nowarn=yes seed=", control$seed, " swapseed=", control$swapseed, ";\n execute ", nexusDataFilename, ";\n lset nst=", control$nst, " rates=", control$rates, ";\n outgroup ", outgroup, ";\n set usebeagle=", control$usebeagle, " beaglescaling=", control$beaglescaling," beaglesse=", control$beaglesse, ";\n mcmc nruns=", control$nruns, " nchains=", control$nchains, " ngen=", control$nchains, " samplefreq=", control$samplefreq, " diagnfreq=", control$diagnfreq, " printfreq=", control$printfreq, " append=no;\n sump relburnin=yes burninfrac=", control$burninfrac, ";\n end;", sep = "")
+  paste("begin mrbayes;\n set autoclose=yes nowarn=yes seed=", control$seed, " swapseed=", control$swapseed, ";\n execute ", nexusDataFilename, ";\n lset nst=", control$nst, " rates=", control$rates, ";\n outgroup ", outgroup, ";\n set usebeagle=", control$usebeagle, " beaglescaling=", control$beaglescaling," beaglesse=", control$beaglesse, ";\n mcmc nruns=", control$nruns, " nchains=", control$nchains, " ngen=", control$ngen, " samplefreq=", control$samplefreq, " diagnfreq=", control$diagnfreq, " printfreq=", control$printfreq, " append=no;\n sump relburnin=yes burninfrac=", control$burninfrac, ";\n end;", sep = "")
 }
 
 .formatParameterFiles <- function(filenames) {
@@ -403,11 +406,11 @@ computeLogSum <- function(logValues) {
     names(output) <- names(x)
     output
   })
-  offsetValue <- cumsum(sapply(2:length(modClusIndList), max))
+  offsetValue <- cumsum(sapply(modClusIndList[1:(length(modClusIndList) - 1)], max))
   for (i in 2:length(modClusIndList)) {
     modClusIndList[[i]] <- modClusIndList[[i]] + offsetValue[[i - 1]]
   }
-  modClusIndList
+  do.call("c", modClusIndList)
 }
 
 # We assume that the vector elements of listToSort do not contain ties.
