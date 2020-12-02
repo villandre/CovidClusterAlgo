@@ -62,6 +62,9 @@ covidCluster <- function(
     estRootTime <- as.numeric(epidemicRootTimePOSIXct)/86400
   }
   control <- do.call("gen.covidCluster.control", control)
+  control$clusteringCriterion <- clusteringCriterion
+  control$distLimit <- distLimit
+  control$clusterRegion <- clusterRegion
   MrBayes.control <- do.call("gen.MrBayes.control", MrBayes.control)
   priors.control <- do.call("gen.priors.control", priors.control)
   nexusFilename <- "mrbayesData.nex"
@@ -71,8 +74,14 @@ covidCluster <- function(
   scriptFilenameWithFolder <- .writeMrBayesFiles(DNAbinData, nexusFilename, folderForMrBayesFiles, outgroup, MrBayes.control)
 
   # We call MrBayes
+  commandForSystem2 <- MrBayes.control$MrBayesShellCommand
+  argsForSystem2 <- scriptFilenameWithFolder
+  if (MrBayes.control$MPIenabled) {
+    commandForSystem2 <- "mpirun"
+    argsForSystem2 <- c(paste("-np", control$numThreads), scriptFilenameWithFolder)
+  }
 
-  system2(command = MrBayes.control$MrBayesShellCommand, args = scriptFilenameWithFolder)
+  system2(command = commandForSystem2, args = argsForSystem2)
   MrBayesOutputFilenamePrefix <- paste(nexusFilenameWithFolder, ".run", 1:MrBayes.control$nruns, sep = "")
 
   # We read in the tree samples and parameter files
@@ -84,7 +93,7 @@ covidCluster <- function(
   mergedChains <- do.call("c", treeSamples)
   unstandardisedWeights <- (parameterValues$logLik + parameterValues$logPrior)
   standardisedWeights <- unstandardisedWeights/sum(unstandardisedWeights)
-  subtreeClusterFun <- function(phyloAndTransTree, subtreeIndex) {
+  subtreeClusterFun <- function(phyloAndTransTree, subtreeIndex, distLimit, clusterRegion, clusteringCriterion) {
     numTips <- length(phyloAndTransTree$tip.label)
     tipsInSubtreeAndRegion <- which((sapply(phyloAndTransTree$tip.label, "[[", "region") == clusterRegion) & sapply(phyloAndTransTree$tip.label, "[[", "subtreeIndex") == subtreeIndex)
     seqNames <- sapply(tipsInSubtreeAndRegion, function(tipNum) phyloAndTransTree$tip.label[[tipNum]]$name)
@@ -129,8 +138,8 @@ gen.covidCluster.control <- function(lengthForNullExtBranchesInPhylo = 1e-8, num
 # Chain characteristics are printed once every 500 iterations (printfreq = 500)
 # The first 20% of iterations are discarded as a burn in (burninfrac = 0.2)
 
-gen.MrBayes.control <- function(MrBayesShellCommand = "mb", nst = 6, rates = "invgamma", ngammacat = 4, nruns = 2, nchains = 4, ngen = 1000000, samplefreq = 1000, diagnfreq = 5000, printfreq = 500, burninfrac = 0.2, beaglesse = "yes", usebeagle = "no", beaglescaling = "dynamic", seed = 42, swapseed = 1) {
-  list(MrBayesShellCommand = MrBayesShellCommand, nst = nst, rates = rates, ngammacat = ngammacat, nruns = nruns, nchains = nchains, ngen = ngen, samplefreq = samplefreq, diagnfreq = diagnfreq, printfreq = printfreq, burninfrac = burninfrac, beaglesse = beaglesse, usebeagle = usebeagle, beaglescaling = beaglescaling, seed = seed, swapseed = swapseed)
+gen.MrBayes.control <- function(MrBayesShellCommand = "mb", nst = 6, rates = "invgamma", ngammacat = 4, nruns = 2, nchains = 4, ngen = 1000000, samplefreq = 1000, diagnfreq = 5000, printfreq = 500, burninfrac = 0.2, beaglesse = "yes", usebeagle = "no", beaglescaling = "dynamic", seed = 42, swapseed = 1, MPIenabled = FALSE) {
+  list(MrBayesShellCommand = MrBayesShellCommand, nst = nst, rates = rates, ngammacat = ngammacat, nruns = nruns, nchains = nchains, ngen = ngen, samplefreq = samplefreq, diagnfreq = diagnfreq, printfreq = printfreq, burninfrac = burninfrac, beaglesse = beaglesse, usebeagle = usebeagle, beaglescaling = beaglescaling, seed = seed, swapseed = swapseed, MPIenabled = MPIenabled)
 }
 
 gen.priors.control <- function() {
@@ -141,7 +150,6 @@ gen.priors.control <- function() {
   timestampsInDays <- as.numeric(timestamps)/86400
   names(timestampsInDays) <- names(timestamps)
   phyloAndTransTreeList <- lapply(phyloList, .genStartPhyloAndTransTree, timestampsInDays = timestampsInDays, regionStamps = regionStamps, logClockRatePriorMean = clockRate, estRootTime = rootTime, control = covidCluster.control)
-  # WE
 
   funToComputeDistribCondOnPhylo <- function(index) {
     logScalingFactor <- logWeights[[index]]
@@ -192,9 +200,14 @@ gen.priors.control <- function() {
 # subtreeClusterFun is a function that takes a phyloAndTransTree object and a region index and produces a vector of cluster membership indices.
 
 .computeCondClusterScoreBySubtree <- function(phyloAndTransTree, subtreeClusterFun, n = 5000, estRootTime, control) {
- funToReplicate <- function(phyloAndTransTree) {
+  phyloAndTransTree$branchMatchIndex <- sapply(1:(nrow(phyloAndTransTree$edge) + 1), function(vertexNum) {
+    match(vertexNum, phyloAndTransTree$edge[ , 2])
+  })
+
+ funToReplicate <- function(phyloAndTransTree, estRootTime, control) {
    newTree <- .simulateNodeTimes(phyloAndTransTree)
-   clustersBySubtree <- sapply(seq_along(newTree$LambdaList), subtreeClusterFun, phyloAndTransTree = newTree)
+   newTree$distTipsAncestorsMatrix <- .produceDistTipsAncestorsMatrix(newTree)
+   clustersBySubtree <- sapply(seq_along(newTree$LambdaList), subtreeClusterFun, phyloAndTransTree = newTree, distLimit = control$distLimit, clusteringCriterion = control$clusteringCriterion, clusterRegion = control$clusterRegion)
    subtreeScoresBySubtree <- sapply(seq_along(newTree$LambdaList), function(subtreeIndex) {
      output <- NA
      if (length(clustersBySubtree[[subtreeIndex]]) > 0) {
@@ -204,7 +217,14 @@ gen.priors.control <- function() {
    })
    lapply(seq_along(clustersBySubtree), function(index) list(clusters = clustersBySubtree[[index]], logScore = subtreeScoresBySubtree[[index]]))
  }
- sampledClustersAndScores <- replicate(n = control$numReplicatesForClusMemScoring, funToReplicate(phyloAndTransTree), simplify = FALSE)
+ if (control$numThreads <= 1) {
+ sampledClustersAndScores <- replicate(n = control$numReplicatesForClusMemScoring, funToReplicate(phyloAndTransTree, estRootTime = estRootTime, control = control), simplify = FALSE)
+ } else {
+   cl <- parallel::makeForkCluster(control$numThreads)
+   sampledClustersAndScores <- parallel::parLapply(cl = cl, X = 1:control$numReplicatesForClusMemScoring, fun = function(x) funToReplicate(phyloAndTransTree, estRootTime = estRootTime, control = control))
+   parallel::stopCluster(cl)
+ }
+
  sampledClustersAndScoresBySubtree <- lapply(seq_along(sampledClustersAndScores[[1]]), function(subtreeIndex) {
    lapply(seq_along(sampledClustersAndScores), function(replicateIndex) list(clusters = sampledClustersAndScores[[replicateIndex]][[subtreeIndex]]$clusters, logScore = sampledClustersAndScores[[replicateIndex]][[subtreeIndex]]$logScore))
  })
@@ -448,3 +468,23 @@ computeLogSum <- function(logValues) {
     list(configIndexVec = configList[[i]], logScore = scoresVec[[i]])
   })
 }
+
+.produceDistTipsAncestorsMatrix <- function(phylogeny) {
+  if (length(phylogeny$tip.label[[1]]) > 1) phylogeny <- .convertToTransTree(phylogeny)
+  tipNums <- seq_along(phylogeny$tip.label)
+  containerMatrix <- matrix(0, ape::Ntip(phylogeny), ape::Nnode(phylogeny))
+  for (tipNum in tipNums) {
+    currentPos <- tipNum
+    totalDist <- 0
+    repeat {
+      branchMatchIndex <- phylogeny$branchMatchIndex[[currentPos]]
+      totalDist <- totalDist + phylogeny$edge.length[[branchMatchIndex]]
+      containerMatrix[tipNum, currentPos - length(tipNums)] <- totalDist
+      parentNode <- phylogeny$edge[branchMatchIndex, 1]
+      if (parentNode == (ape::Ntip(phylogeny) + 1)) break
+      currentPos <- parentNode
+    }
+  }
+  containerMatrix
+}
+

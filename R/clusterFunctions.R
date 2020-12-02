@@ -580,6 +580,10 @@ getDistanceBasedClusters <- function(phyloAndTransTree, subtreeIndex = NULL, dis
     stop("Clustering criterion must be either 'cophenetic', 'mrca', or 'consecutive'.")
   }
   transmissionTree <- .convertToTransTree(phyloAndTransTree)
+  # transmissionTree$branchMatchIndex <- sapply(1:(nrow(transmissionTree$edge) + 1), function(vertexNum) {
+  #   match(vertexNum, transmissionTree$edge[ , 2])
+  # })
+  # transmissionTree$distTipsAncestorsMatrix <- .produceDistTipsAncestorsMatrix(transmissionTree)
   if (identical(criterion, "consecutive")) {
     updateTransmissionTree <- function(phylogeny) { # Seems inefficient, but it shouldn't take too much time, even in large samples...
       transmissionTree <- ape::multi2di(phylogeny)
@@ -621,13 +625,18 @@ getDistanceBasedClusters <- function(phyloAndTransTree, subtreeIndex = NULL, dis
       incrementNodesToCheckFlag <- FALSE
     } else {
       if ((transmissionTree$node.label[[nodeNumber - ape::Ntip(transmissionTree)]]$region == regionLabel) & (is.null(subtreeIndex) | identical(subtreeIndex, transmissionTree$node.label[[nodeNumber - ape::Ntip(transmissionTree)]]$subtreeIndex))) {
-        allDescendantTips <- phangorn::Descendants(transmissionTree, node = nodeNumber, type = "tips")[[1]]
-        allDescendantTipsRegions <- sapply(allDescendantTips, FUN = function(tipNum) transmissionTree$tip.label[[tipNum]]$region)
-        descendantTips <- allDescendantTips[allDescendantTipsRegions == regionLabel]
-        if (!is.null(subtreeIndex)) {
-          descendantTipsSubtrees <- sapply(descendantTips, FUN = function(tipNum) transmissionTree$tip.label[[tipNum]]$subtreeIndex)
-          descendantTips <- descendantTips[descendantTipsSubtrees == subtreeIndex]
+        allDescendantTips <- NULL
+        if (is.null(subtreeIndex)) {
+          allDescendantTips <- phangorn::Descendants(transmissionTree, node = nodeNumber, type = "tips")[[1]]
+        } else {
+          allDescendantTips <- which(sapply(transmissionTree$tip.label, "[[", "subtreeIndex") == subtreeIndex)
         }
+        allDescendantTipsRegions <- sapply(transmissionTree$tip.label[allDescendantTips], "[[", "region")
+        descendantTips <- allDescendantTips[allDescendantTipsRegions == regionLabel]
+        # if (!is.null(subtreeIndex)) {
+        #   descendantTipsSubtrees <- sapply(descendantTips, FUN = function(tipNum) transmissionTree$tip.label[[tipNum]]$subtreeIndex)
+        #   descendantTips <- descendantTips[descendantTipsSubtrees == subtreeIndex]
+        # }
 
         distances <- NULL
         if (identical(criterion, "cophenetic")) {
@@ -739,8 +748,27 @@ dist.tipPairs.mrca <- function(phylogeny, tipNumbers) {
 
 dist.tips.mrca <- function(phylogeny, tipNumbers) {
   tipsMRCA <- ape::getMRCA(phylogeny, tipNumbers)
-  sapply(tipNumbers, function(tipNum) dist.node.ancestor(phylogeny, tipNum, tipsMRCA))
+  # funToGetDist <- function(tipNum) {
+  #   totalDist <- 0
+  #   currentNode <- tipNum
+  #   repeat {
+  #     matchingIndex <- phylogeny$branchMatchIndex[[currentNode]]
+  #     if (is.null(matchingIndex)) {
+  #       matchingIndex <- match(currentNode, phylogeny$edge[ , 2])
+  #     }
+  #     if (is.na(matchingIndex)) stop("MRCA has not been correctly identified (or tree is malformed)! \n")
+  #     totalDist <- totalDist + phylogeny$edge.length[[matchingIndex]]
+  #     parentNode <- phylogeny$edge[matchingIndex, 1]
+  #     if (parentNode == tipsMRCA) break
+  #     currentNode <- parentNode
+  #   }
+  #   totalDist
+  # }
+  # sapply(tipNumbers, funToGetDist)
+  phylogeny$distTipsAncestorsMatrix[tipNumbers, tipsMRCA - length(phylogeny$tip.label)]
 }
+
+
 
 dist.tips.root.phylo <- function(phylogeny, tips) {
   if (is.character(tips)) {
