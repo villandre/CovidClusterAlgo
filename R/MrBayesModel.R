@@ -149,8 +149,8 @@ gen.priors.control <- function() {
 .computeClusMembershipDistribution <- function(phyloList, targetRegion, logWeights, timestamps, regionStamps, clockRate, rootTime, subtreeClusterFun, covidCluster.control, priors.control) {
   timestampsInDays <- as.numeric(timestamps)/86400
   names(timestampsInDays) <- names(timestamps)
-  phyloList <- lapply(phyloList, .incrementPhylo)
   phyloAndTransTreeList <- lapply(phyloList, .genStartPhyloAndTransTree, timestampsInDays = timestampsInDays, regionStamps = regionStamps, logClockRatePriorMean = clockRate, estRootTime = rootTime, control = covidCluster.control)
+  phyloAndTransTreeList <- lapply(phyloAndTransTreeList, .incrementPhylo)
 
   funToComputeDistribCondOnPhylo <- function(index) {
     logScalingFactor <- logWeights[[index]]
@@ -497,6 +497,9 @@ computeLogSum <- function(logValues) {
     branchMatch <- match(vertexNum, phyloCopy$edge[ , 2])
     parentNum <- phyloCopy$edge[branchMatch, 1]
     c(branchMatch, parentNum)
+  })
+  phyloCopy$tipNumsInSubtree <- lapply(seq_along(phyloCopy$LambdaList), function(subtreeIndex) {
+    which(sapply(phyloCopy$tip.label, "[[", "subtreeIndex") == subtreeIndex)
   })
   phyloCopy$branchMatchIndex <- branchMatchParentMatrix[1, ]
   phyloCopy$parentNumVec <- branchMatchParentMatrix[2, ]

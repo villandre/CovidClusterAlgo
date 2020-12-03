@@ -629,7 +629,8 @@ getDistanceBasedClusters <- function(phyloAndTransTree, subtreeIndex = NULL, dis
         if (is.null(subtreeIndex)) {
           allDescendantTips <- phangorn::Descendants(transmissionTree, node = nodeNumber, type = "tips")[[1]]
         } else {
-          allDescendantTips <- which(sapply(transmissionTree$tip.label, "[[", "subtreeIndex") == subtreeIndex)
+          # allDescendantTips <- which(sapply(transmissionTree$tip.label, "[[", "subtreeIndex") == subtreeIndex)
+          allDescendantTips <- transmissionTree$tipNumsInSubtree[[subtreeIndex]]
         }
         allDescendantTipsRegions <- sapply(transmissionTree$tip.label[allDescendantTips], "[[", "region")
         descendantTips <- allDescendantTips[allDescendantTipsRegions == regionLabel]
