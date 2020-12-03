@@ -149,6 +149,7 @@ gen.priors.control <- function() {
 .computeClusMembershipDistribution <- function(phyloList, targetRegion, logWeights, timestamps, regionStamps, clockRate, rootTime, subtreeClusterFun, covidCluster.control, priors.control) {
   timestampsInDays <- as.numeric(timestamps)/86400
   names(timestampsInDays) <- names(timestamps)
+  phyloList <- lapply(phyloList, .incrementPhylo)
   phyloAndTransTreeList <- lapply(phyloList, .genStartPhyloAndTransTree, timestampsInDays = timestampsInDays, regionStamps = regionStamps, logClockRatePriorMean = clockRate, estRootTime = rootTime, control = covidCluster.control)
 
   funToComputeDistribCondOnPhylo <- function(index) {
@@ -200,13 +201,15 @@ gen.priors.control <- function() {
 # subtreeClusterFun is a function that takes a phyloAndTransTree object and a region index and produces a vector of cluster membership indices.
 
 .computeCondClusterScoreBySubtree <- function(phyloAndTransTree, subtreeClusterFun, n = 5000, estRootTime, control) {
-  phyloAndTransTree$branchMatchIndex <- sapply(1:(nrow(phyloAndTransTree$edge) + 1), function(vertexNum) {
-    match(vertexNum, phyloAndTransTree$edge[ , 2])
-  })
-
  funToReplicate <- function(phyloAndTransTree, estRootTime, control) {
    newTree <- .simulateNodeTimes(phyloAndTransTree)
-   newTree$distTipsAncestorsMatrix <- .produceDistTipsAncestorsMatrix(newTree)
+   edgeLengths <- sapply(newTree$edge.length, "[[", "transmissionTree")
+   newTree$distTipsAncestorsMatrix <- produceDistTipsAncestorsMatrixRcpp(
+     numTips = length(phyloAndTransTree$tip.label),
+     numNodes = length(phyloAndTransTree$node.label),
+     branchMatchIndexVec = phyloAndTransTree$branchMatchIndex - 1,
+     edgeLengthsVec = edgeLengths,
+     parentNumVec = phyloAndTransTree$parentNumVec - 1) # The -1 is there because this is a C++ function, and indexing starts at 0 instead of 1.
    clustersBySubtree <- sapply(seq_along(newTree$LambdaList), subtreeClusterFun, phyloAndTransTree = newTree, distLimit = control$distLimit, clusteringCriterion = control$clusteringCriterion, clusterRegion = control$clusterRegion)
    subtreeScoresBySubtree <- sapply(seq_along(newTree$LambdaList), function(subtreeIndex) {
      output <- NA
@@ -472,19 +475,30 @@ computeLogSum <- function(logValues) {
 .produceDistTipsAncestorsMatrix <- function(phylogeny) {
   if (length(phylogeny$tip.label[[1]]) > 1) phylogeny <- .convertToTransTree(phylogeny)
   tipNums <- seq_along(phylogeny$tip.label)
-  containerMatrix <- matrix(0, ape::Ntip(phylogeny), ape::Nnode(phylogeny))
+  containerMatrix <- matrix(0, length(phylogeny$tip.label), length(phylogeny$node.label))
   for (tipNum in tipNums) {
     currentPos <- tipNum
     totalDist <- 0
     repeat {
       branchMatchIndex <- phylogeny$branchMatchIndex[[currentPos]]
+      parentNum <- phylogeny$parentNumVec[[currentPos]]
       totalDist <- totalDist + phylogeny$edge.length[[branchMatchIndex]]
-      containerMatrix[tipNum, currentPos - length(tipNums)] <- totalDist
-      parentNode <- phylogeny$edge[branchMatchIndex, 1]
-      if (parentNode == (ape::Ntip(phylogeny) + 1)) break
-      currentPos <- parentNode
+      containerMatrix[tipNum, parentNum - length(tipNums)] <- totalDist
+      currentPos <- parentNum
+      if (parentNum == (length(phylogeny$tip.label) + 1)) break
     }
   }
   containerMatrix
 }
 
+.incrementPhylo <- function(phylogeny) {
+  phyloCopy <- phylogeny
+  branchMatchParentMatrix <- sapply(1:(nrow(phyloCopy$edge) + 1), function(vertexNum) {
+    branchMatch <- match(vertexNum, phyloCopy$edge[ , 2])
+    parentNum <- phyloCopy$edge[branchMatch, 1]
+    c(branchMatch, parentNum)
+  })
+  phyloCopy$branchMatchIndex <- branchMatchParentMatrix[1, ]
+  phyloCopy$parentNumVec <- branchMatchParentMatrix[2, ]
+  phyloCopy
+}

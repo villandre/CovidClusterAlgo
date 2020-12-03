@@ -1,1 +1,3 @@
+useDynLib(CovidCluster)
+importFrom(Rcpp, evalCpp)
 exportPattern("^[[:alpha:]]+")

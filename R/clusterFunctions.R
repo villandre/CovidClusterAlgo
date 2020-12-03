@@ -587,7 +587,7 @@ getDistanceBasedClusters <- function(phyloAndTransTree, subtreeIndex = NULL, dis
   if (identical(criterion, "consecutive")) {
     updateTransmissionTree <- function(phylogeny) { # Seems inefficient, but it shouldn't take too much time, even in large samples...
       transmissionTree <- ape::multi2di(phylogeny)
-      nodesToFix <- which(sapply(transmissionTree$node.label, identical, "")) + ape::Ntip(transmissionTree)
+      nodesToFix <- which(sapply(transmissionTree$node.label, identical, "")) + length(transmissionTree$tip.label)
       while (length(nodesToFix) > 0) {
         currentNode <- phangorn::Ancestors(transmissionTree, nodesToFix[[1]], "parent")
         parentSequence <- nodesToFix[[1]]
@@ -747,24 +747,8 @@ dist.tipPairs.mrca <- function(phylogeny, tipNumbers) {
 }
 
 dist.tips.mrca <- function(phylogeny, tipNumbers) {
-  tipsMRCA <- ape::getMRCA(phylogeny, tipNumbers)
-  # funToGetDist <- function(tipNum) {
-  #   totalDist <- 0
-  #   currentNode <- tipNum
-  #   repeat {
-  #     matchingIndex <- phylogeny$branchMatchIndex[[currentNode]]
-  #     if (is.null(matchingIndex)) {
-  #       matchingIndex <- match(currentNode, phylogeny$edge[ , 2])
-  #     }
-  #     if (is.na(matchingIndex)) stop("MRCA has not been correctly identified (or tree is malformed)! \n")
-  #     totalDist <- totalDist + phylogeny$edge.length[[matchingIndex]]
-  #     parentNode <- phylogeny$edge[matchingIndex, 1]
-  #     if (parentNode == tipsMRCA) break
-  #     currentNode <- parentNode
-  #   }
-  #   totalDist
-  # }
-  # sapply(tipNumbers, funToGetDist)
+  # tipsMRCA <- ape::getMRCA(phylogeny, tipNumbers)
+  tipsMRCA <- getMRCA_Rcpp(phylogeny$parentNumVec, tipNumbers, length(phylogeny$tip.label))
   phylogeny$distTipsAncestorsMatrix[tipNumbers, tipsMRCA - length(phylogeny$tip.label)]
 }
 
