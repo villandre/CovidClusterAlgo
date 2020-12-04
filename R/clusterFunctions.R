@@ -129,6 +129,7 @@ phylo <- function(edge, edge.length, tip.label, node.label = NULL) {
 
 .computeSubtreeRootNums <- function(phyloAndTransTree) {
   orderedVertexNums <- .getVertexOrderByDepth(phyloAndTransTree)
+  # orderedVertexNums <- phyloAndTransTree$vertexOrderByDepth
   orderedVertexNums <- orderedVertexNums[orderedVertexNums > ape::Ntip(phyloAndTransTree)]
   snipPoints <- vector(mode = "numeric")
   for (vertexNum in tail(orderedVertexNums, n = -1)) {
@@ -236,8 +237,8 @@ phylo <- function(edge, edge.length, tip.label, node.label = NULL) {
   subtreeIndices <- sapply(phyloAndTransTree$node.label, "[[", "subtreeIndex")
   nodesInSubtreeNums <- which(subtreeIndices == subtreeIndex) + length(phyloAndTransTree$tip.label)
   getTipTimesList <- function(nodeNum) {
-    childrenNums <- phyloAndTransTree$edge[which(nodeNum == phyloAndTransTree$edge[ , 1]), 2]
-
+    # childrenNums <- phyloAndTransTree$edge[which(nodeNum == phyloAndTransTree$edge[ , 1]), 2]
+    childrenNums <- phyloAndTransTree$childrenNumList[[nodeNum]]
     childrenSubtreeIndices <- sapply(childrenNums, function(childNum) {
       if (childNum <= length(phyloAndTransTree$tip.label)) {
         return(phyloAndTransTree$tip.label[[childNum]]$subtreeIndex)
@@ -568,9 +569,9 @@ getClustersFromChains <- function(findBayesianClusterResultsList, linkageThresho
 }
 
 getDistanceBasedClusters <- function(phyloAndTransTree, subtreeIndex = NULL, distLimit, regionLabel, criterion = c("mrca", "cophenetic", "consecutive")) {
+  numTips <- length(phyloAndTransTree$tip.label)
   if (!is.null(subtreeIndex)) {
     subtreeRootNodeNum <- phyloAndTransTree$LambdaList[[subtreeIndex]]$rootNodeNum
-    numTips <- length(phyloAndTransTree$tip.label)
     subtreeRootCondition <- phyloAndTransTree$node.label[[subtreeRootNodeNum - numTips]]$region != regionLabel
     subtreeTipsCondition <- !any((sapply(phyloAndTransTree$tip.label, "[[", "region") == regionLabel) & (sapply(phyloAndTransTree$tip.label, "[[", "subtreeIndex") == subtreeIndex)) # That condition should not be necessary...
     if (subtreeRootCondition &  subtreeTipsCondition) return(list()) # A cluster must be contained within an introduction into the target region.
@@ -674,11 +675,24 @@ getDistanceBasedClusters <- function(phyloAndTransTree, subtreeIndex = NULL, dis
       }
     }
     if (incrementNodesToCheckFlag) {
-      nodeChildren <- phangorn::Children(transmissionTree, node = nodeNumber)
-      childrenRegions <- sapply(nodeChildren, function(vertexNum) .getVertexLabel( phylogeny = transmissionTree, vertexNum = vertexNum)$region)
+      # nodeChildren <- phangorn::Children(transmissionTree, node = nodeNumber)
+      nodeChildren <- transmissionTree$childrenNumList[[nodeNumber]]
+      childrenRegions <- sapply(nodeChildren, function(vertexNum) {
+        if (vertexNum <= numTips) {
+          return(transmissionTree$tip.label[[vertexNum]]$region)
+        } else {
+          return(transmissionTree$node.label[[vertexNum - numTips]]$region)
+        }
+      })
       keepChild <- childrenRegions == regionLabel
       if (!is.null(subtreeIndex)) {
-        childrenSubtrees <- sapply(nodeChildren, function(vertexNum) .getVertexLabel( phylogeny = transmissionTree, vertexNum = vertexNum)$subtreeIndex)
+        childrenSubtrees <- sapply(nodeChildren, function(vertexNum) {
+          if (vertexNum <= numTips) {
+            return(transmissionTree$tip.label[[vertexNum]]$subtreeIndex)
+          } else {
+            return(transmissionTree$node.label[[vertexNum - numTips]]$subtreeIndex)
+          }
+        })
         keepChild <- keepChild & (childrenSubtrees == subtreeIndex)
       }
       nodesToCheck <- c(nodesToCheck, nodeChildren[keepChild])
@@ -779,7 +793,11 @@ dist.tips.root.phylo <- function(phylogeny, tips) {
   edgeLengths <- sapply(seq_along(phyloAndTransTree$edge.length), function(edgeIndex) {
     childNum <- phyloAndTransTree$edge[edgeIndex, 2]
     parentNum <- phyloAndTransTree$edge[edgeIndex, 1]
-    .getVertexLabel(phyloAndTransTree, childNum)$time - phyloAndTransTree$node.label[[parentNum - numTips]]$time
+    if (childNum <= numTips) {
+      return(phyloAndTransTree$tip.label[[childNum]]$time - phyloAndTransTree$node.label[[parentNum - numTips]]$time)
+    } else {
+      return(phyloAndTransTree$node.label[[childNum - numTips]]$time - phyloAndTransTree$node.label[[parentNum - numTips]]$time)
+    }
   })
   for (edgeIndex in seq_along(edgeLengths)) {
     phyloAndTransTree$edge.length[[edgeIndex]]$transmissionTree <- edgeLengths[[edgeIndex]]

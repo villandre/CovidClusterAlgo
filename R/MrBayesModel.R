@@ -93,23 +93,23 @@ covidCluster <- function(
   mergedChains <- do.call("c", treeSamples)
   unstandardisedWeights <- (parameterValues$logLik + parameterValues$logPrior)
   standardisedWeights <- unstandardisedWeights/sum(unstandardisedWeights)
-  subtreeClusterFun <- function(phyloAndTransTree, subtreeIndex, distLimit, clusterRegion, clusteringCriterion) {
-    numTips <- length(phyloAndTransTree$tip.label)
-    tipsInSubtreeAndRegion <- which((sapply(phyloAndTransTree$tip.label, "[[", "region") == clusterRegion) & sapply(phyloAndTransTree$tip.label, "[[", "subtreeIndex") == subtreeIndex)
-    seqNames <- sapply(tipsInSubtreeAndRegion, function(tipNum) phyloAndTransTree$tip.label[[tipNum]]$name)
-    output <- seq_along(seqNames)
-    names(output) <- seqNames
-    if (identical(phyloAndTransTree$node.label[[phyloAndTransTree$LambdaList[[subtreeIndex]]$rootNodeNum - numTips]]$region, clusterRegion)) {
-      clusterList <- getDistanceBasedClusters(phyloAndTransTree = phyloAndTransTree, subtreeIndex = subtreeIndex, distLimit = distLimit, regionLabel = clusterRegion, criterion = clusteringCriterion)
-      output <- integer(0)
-      if (length(clusterList) > 0) {
-        output <- .convertClusterListToVecOfIndices(clusterList, seqNames)
-      }
-    }
-    output
-  }
+  # subtreeClusterFun <- function(phyloAndTransTree, subtreeIndex, distLimit, clusterRegion, clusteringCriterion) {
+  #   numTips <- length(phyloAndTransTree$tip.label)
+  #   tipsInSubtreeAndRegion <- which((sapply(phyloAndTransTree$tip.label, "[[", "region") == clusterRegion) & sapply(phyloAndTransTree$tip.label, "[[", "subtreeIndex") == subtreeIndex)
+  #   seqNames <- sapply(tipsInSubtreeAndRegion, function(tipNum) phyloAndTransTree$tip.label[[tipNum]]$name)
+  #   output <- seq_along(seqNames)
+  #   names(output) <- seqNames
+  #   if (identical(phyloAndTransTree$node.label[[phyloAndTransTree$LambdaList[[subtreeIndex]]$rootNodeNum - numTips]]$region, clusterRegion)) {
+  #     clusterList <- getDistanceBasedClusters(phyloAndTransTree = phyloAndTransTree, subtreeIndex = subtreeIndex, distLimit = distLimit, regionLabel = clusterRegion, criterion = clusteringCriterion)
+  #     output <- integer(0)
+  #     if (length(clusterList) > 0) {
+  #       output <- .convertClusterListToVecOfIndices(clusterList, seqNames)
+  #     }
+  #   }
+  #   output
+  # }
 
-  .computeClusMembershipDistribution(phyloList = mergedChains, targetRegion = clusterRegion, logWeights =  standardisedWeights, timestamps = seqsTimestampsPOSIXct, regionStamps = seqsRegionStamps, clockRate = perSiteClockRate, rootTime = estRootTime, subtreeClusterFun = subtreeClusterFun, covidCluster.control = control, priors.control = priors.control)
+  .computeClusMembershipDistribution(phyloList = mergedChains, targetRegion = clusterRegion, logWeights =  standardisedWeights, timestamps = seqsTimestampsPOSIXct, regionStamps = seqsRegionStamps, clockRate = perSiteClockRate, rootTime = estRootTime, covidCluster.control = control, priors.control = priors.control)
 }
 
 gen.covidCluster.control <- function(lengthForNullExtBranchesInPhylo = 1e-8, numReplicatesForClusMemScoring = 5000, clusIndReportDomainSize = 10, numThreads = 1) {
@@ -146,21 +146,30 @@ gen.priors.control <- function() {
  list()
 }
 
-.computeClusMembershipDistribution <- function(phyloList, targetRegion, logWeights, timestamps, regionStamps, clockRate, rootTime, subtreeClusterFun, covidCluster.control, priors.control) {
+.computeClusMembershipDistribution <- function(phyloList, targetRegion, logWeights, timestamps, regionStamps, clockRate, rootTime, covidCluster.control, priors.control) {
   timestampsInDays <- as.numeric(timestamps)/86400
   names(timestampsInDays) <- names(timestamps)
   phyloAndTransTreeList <- lapply(phyloList, .genStartPhyloAndTransTree, timestampsInDays = timestampsInDays, regionStamps = regionStamps, logClockRatePriorMean = clockRate, estRootTime = rootTime, control = covidCluster.control)
   phyloAndTransTreeList <- lapply(phyloAndTransTreeList, .incrementPhylo)
+  for (i in seq_along(logWeights)) {
+    phyloAndTransTreeList[[i]]$logWeight <- logWeights[[i]]
+  }
 
-  funToComputeDistribCondOnPhylo <- function(index) {
-    logScalingFactor <- logWeights[[index]]
-    distrib <- .computeCondClusterScore(phyloAndTransTree = phyloAndTransTreeList[[index]], subtreeClusterFun = subtreeClusterFun, estRootTime = rootTime, control = covidCluster.control)
+  funToComputeDistribCondOnPhylo <- function(phyloAndTransTree, estRootTime, control) {
+    logScalingFactor <- phyloAndTransTree$logWeight
+    distrib <- .computeCondClusterScore(phyloAndTransTree = phyloAndTransTree, estRootTime = estRootTime, control = control)
     for (i in seq_along(distrib)) {
       distrib[[i]]$logScore <- distrib[[i]]$logScore + logScalingFactor
     }
     distrib
   }
-  distribCondOnPhyloList <- lapply(seq_along(phyloAndTransTreeList), funToComputeDistribCondOnPhylo)
+  if (covidCluster.control$numThreads > 1) {
+    cl <- parallel::makeForkCluster(covidCluster.control$numThreads)
+    distribCondOnPhyloList <- parallel::parLapply(cl = cl, X = phyloAndTransTreeList, fun = funToComputeDistribCondOnPhylo, estRootTime = rootTime, control = covidCluster.control)
+    parallel::stopCluster(cl)
+  } else {
+  distribCondOnPhyloList <- lapply(phyloAndTransTreeList, funToComputeDistribCondOnPhylo, estRootTime = rootTime, control = covidCluster.control)
+  }
   combinedDistribs <- do.call("c", distribCondOnPhyloList)
   namesForOrder <- names(combinedDistribs[[1]]$config)
   for (i in seq_along(combinedDistribs)) {
@@ -200,7 +209,7 @@ gen.priors.control <- function() {
 
 # subtreeClusterFun is a function that takes a phyloAndTransTree object and a region index and produces a vector of cluster membership indices.
 
-.computeCondClusterScoreBySubtree <- function(phyloAndTransTree, subtreeClusterFun, n = 5000, estRootTime, control) {
+.computeCondClusterScoreBySubtree <- function(phyloAndTransTree, n = 5000, estRootTime, control) {
  funToReplicate <- function(phyloAndTransTree, estRootTime, control) {
    newTree <- .simulateNodeTimes(phyloAndTransTree)
    edgeLengths <- sapply(newTree$edge.length, "[[", "transmissionTree")
@@ -210,6 +219,21 @@ gen.priors.control <- function() {
      branchMatchIndexVec = phyloAndTransTree$branchMatchIndex - 1,
      edgeLengthsVec = edgeLengths,
      parentNumVec = phyloAndTransTree$parentNumVec - 1) # The -1 is there because this is a C++ function, and indexing starts at 0 instead of 1.
+   subtreeClusterFun <- function(phyloAndTransTree, subtreeIndex, distLimit, clusterRegion, clusteringCriterion) {
+     numTips <- length(phyloAndTransTree$tip.label)
+     tipsInSubtreeAndRegion <- which((sapply(phyloAndTransTree$tip.label, "[[", "region") == clusterRegion) & sapply(phyloAndTransTree$tip.label, "[[", "subtreeIndex") == subtreeIndex)
+     seqNames <- sapply(tipsInSubtreeAndRegion, function(tipNum) phyloAndTransTree$tip.label[[tipNum]]$name)
+     output <- seq_along(seqNames)
+     names(output) <- seqNames
+     if (identical(phyloAndTransTree$node.label[[phyloAndTransTree$LambdaList[[subtreeIndex]]$rootNodeNum - numTips]]$region, clusterRegion)) {
+       clusterList <- getDistanceBasedClusters(phyloAndTransTree = phyloAndTransTree, subtreeIndex = subtreeIndex, distLimit = distLimit, regionLabel = clusterRegion, criterion = clusteringCriterion)
+       output <- integer(0)
+       if (length(clusterList) > 0) {
+         output <- .convertClusterListToVecOfIndices(clusterList, seqNames)
+       }
+     }
+     output
+   }
    clustersBySubtree <- sapply(seq_along(newTree$LambdaList), subtreeClusterFun, phyloAndTransTree = newTree, distLimit = control$distLimit, clusteringCriterion = control$clusteringCriterion, clusterRegion = control$clusterRegion)
    subtreeScoresBySubtree <- sapply(seq_along(newTree$LambdaList), function(subtreeIndex) {
      output <- NA
@@ -220,13 +244,7 @@ gen.priors.control <- function() {
    })
    lapply(seq_along(clustersBySubtree), function(index) list(clusters = clustersBySubtree[[index]], logScore = subtreeScoresBySubtree[[index]]))
  }
- if (control$numThreads <= 1) {
  sampledClustersAndScores <- replicate(n = control$numReplicatesForClusMemScoring, funToReplicate(phyloAndTransTree, estRootTime = estRootTime, control = control), simplify = FALSE)
- } else {
-   cl <- parallel::makeForkCluster(control$numThreads)
-   sampledClustersAndScores <- parallel::parLapply(cl = cl, X = 1:control$numReplicatesForClusMemScoring, fun = function(x) funToReplicate(phyloAndTransTree, estRootTime = estRootTime, control = control))
-   parallel::stopCluster(cl)
- }
 
  sampledClustersAndScoresBySubtree <- lapply(seq_along(sampledClustersAndScores[[1]]), function(subtreeIndex) {
    lapply(seq_along(sampledClustersAndScores), function(replicateIndex) list(clusters = sampledClustersAndScores[[replicateIndex]][[subtreeIndex]]$clusters, logScore = sampledClustersAndScores[[replicateIndex]][[subtreeIndex]]$logScore))
@@ -245,9 +263,9 @@ gen.priors.control <- function() {
   lapply(seq_along(clusterMembershipVecs), function(index) list(config = clusterMembershipVecs[[index]], logScore = clusterLogScores[[index]]))
 }
 
-.computeCondClusterScore <- function(phyloAndTransTree, subtreeClusterFun, estRootTime, control) {
+.computeCondClusterScore <- function(phyloAndTransTree, estRootTime, control) {
   n <- control$numReplicatesForClusMemScoring
-  clustersAndScoresBySubtree <- .computeCondClusterScoreBySubtree(phyloAndTransTree = phyloAndTransTree, subtreeClusterFun = subtreeClusterFun, n = n, estRootTime = estRootTime, control = control)
+  clustersAndScoresBySubtree <- .computeCondClusterScoreBySubtree(phyloAndTransTree = phyloAndTransTree, n = n, estRootTime = estRootTime, control = control)
   .combineRegionalEstimatesAndScores(clustersAndScoresBySubtree)
 }
 
@@ -339,15 +357,13 @@ computeLogSum <- function(logValues) {
 .simulateNodeTimes <- function(phyloAndTransTree) {
   numTips <- length(phyloAndTransTree$tip.label)
   baseRatePerIntroduction <- sapply(phyloAndTransTree$LambdaList, "[[", "Lambda")
-  orderedVertices <- .getVertexOrderByDepth(phyloAndTransTree, reverse = TRUE) # Represents the topology
+  # orderedVertices <- .getVertexOrderByDepth(phyloAndTransTree, reverse = TRUE) # Represents the topology
+  orderedVertices <- rev(phyloAndTransTree$vertexOrderByDepth)
   orderedNodes <- orderedVertices[orderedVertices > numTips]
   for (nodeNum in orderedNodes) {
     childrenNums <- NULL
-    if (!is.null(phyloAndTransTree$childrenList)) {
-      childrenNums <- phyloAndTransTree$childrenList[[nodeNum - numTips]]
-    } else {
-      childrenNums <- phyloAndTransTree$edge[which(phyloAndTransTree$edge[ , 1] == nodeNum), 2]
-    }
+    childrenNums <- phyloAndTransTree$childrenNumList[[nodeNum]]
+    # childrenNums <- phyloAndTransTree$edge[which(phyloAndTransTree$edge[ , 1] == nodeNum), 2]
     introForMerge <- phyloAndTransTree$node.label[[nodeNum - length(phyloAndTransTree$tip.label)]]$subtreeIndex
     minChildrenTimes <- min(sapply(childrenNums, function(childNum) {
       returnTime <- NULL
@@ -394,8 +410,13 @@ computeLogSum <- function(logValues) {
   repeat {
     vertexNum <- verticesToReview[[index]]
     currentTime <- phyloAndTransTreeCopy$node.label[[vertexNum - length(phyloAndTransTreeCopy$tip.label)]]$time
-    childrenNums <- phangorn::Children(phyloAndTransTree, vertexNum)
-    matchingBranchNums <- match(childrenNums, phyloAndTransTreeCopy$edge[ , 2])
+    childrenNums <- phyloAndTransTree$childrenNumList[[vertexNum]]
+    matchingBranchNums <- phyloAndTransTree$branchMatchIndex[childrenNums]
+    if (is.null(childrenNums)) { # We're initialising, so both childrenNums and matchingBranchNums will be NULL...
+      childrenNums <- phangorn::Children(phyloAndTransTree, vertexNum)
+      matchingBranchNums <- match(childrenNums, phyloAndTransTreeCopy$edge[ , 2])
+    }
+
     transTreeBranchLengths <- sapply(matchingBranchNums, function(edgeNum) phyloAndTransTreeCopy$edge.length[[edgeNum]]$phylogeny/exp(phyloAndTransTreeCopy$edge.length[[edgeNum]]$logXi))
     childrenTimes <- currentTime + transTreeBranchLengths
     timesToConsider <- c(timesToConsider, childrenTimes)
@@ -498,10 +519,17 @@ computeLogSum <- function(logValues) {
     parentNum <- phyloCopy$edge[branchMatch, 1]
     c(branchMatch, parentNum)
   })
+  nodeChildrenList <- lapply(length(phyloCopy$tip.label):length(phyloCopy$edge.length) + 1, function(nodeNum) {
+    phyloCopy$edge[which(phyloCopy$edge[ , 1] == nodeNum), 2]
+  })
+  childrenList <- vector(mode = "list", length = length(phyloCopy$edge.length) + 1)
+  childrenList[length(phyloCopy$tip.label):length(phyloCopy$edge.length) + 1] <- nodeChildrenList
   phyloCopy$tipNumsInSubtree <- lapply(seq_along(phyloCopy$LambdaList), function(subtreeIndex) {
     which(sapply(phyloCopy$tip.label, "[[", "subtreeIndex") == subtreeIndex)
   })
+  phyloCopy$vertexOrderByDepth <- .getVertexOrderByDepth(phyloCopy)
   phyloCopy$branchMatchIndex <- branchMatchParentMatrix[1, ]
   phyloCopy$parentNumVec <- branchMatchParentMatrix[2, ]
+  phyloCopy$childrenNumList <- childrenList
   phyloCopy
 }
