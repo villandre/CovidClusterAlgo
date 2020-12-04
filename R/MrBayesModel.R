@@ -226,6 +226,21 @@ gen.priors.control <- function() {
      output <- seq_along(seqNames)
      names(output) <- seqNames
      if (identical(phyloAndTransTree$node.label[[phyloAndTransTree$LambdaList[[subtreeIndex]]$rootNodeNum - numTips]]$region, clusterRegion)) {
+       browser()
+       clusterList <- getMRCAclustersRcpp(
+         parentNumVec = phyloAndTransTree$parentNumVec,
+         childrenNumList = phyloAndTransTree$childrenNumList,
+         branchMatchIndexVec = phyloAndTransTree$branchMatchIndex,
+         branchLengthsVec = sapply(phyloAndTransTree$edge.length, "[[", "transmissionTree"),
+         subtreeIndexVec = phyloAndTransTree$subtreeIndexVec,
+         vertexRegionVec = phyloAndTransTree$vertexRegionVec,
+         tipNamesVec = phyloAndTransTree$tipNamesVec,
+         subtreeRootNum = phyloAndTransTree$LambdaList[[subtreeIndex]]$rootNodeNum,
+         distTipsAncestorsMatrix = phyloAndTransTree$distTipsAncestorsMatrix,
+         subtreeIndex = subtreeIndex,
+         numTips = numTips,
+         regionLabel = clusterRegion,
+         distLimit = distLimit)
        clusterList <- getDistanceBasedClusters(phyloAndTransTree = phyloAndTransTree, subtreeIndex = subtreeIndex, distLimit = distLimit, regionLabel = clusterRegion, criterion = clusteringCriterion)
        output <- integer(0)
        if (length(clusterList) > 0) {
@@ -527,6 +542,9 @@ computeLogSum <- function(logValues) {
   phyloCopy$tipNumsInSubtree <- lapply(seq_along(phyloCopy$LambdaList), function(subtreeIndex) {
     which(sapply(phyloCopy$tip.label, "[[", "subtreeIndex") == subtreeIndex)
   })
+  phyloCopy$subtreeIndexVec <- c(sapply(phyloCopy$tip.label, "[[", "subtreeIndex"), sapply(phyloCopy$node.label, "[[", "subtreeIndex"))
+  phyloCopy$vertexRegionVec <- c(sapply(phyloCopy$tip.label, "[[", "region"), sapply(phyloCopy$node.label, "[[", "region"))
+  phyloCopy$tipNamesVec <- sapply(phyloCopy$tip.label, "[[", "name")
   phyloCopy$vertexOrderByDepth <- .getVertexOrderByDepth(phyloCopy)
   phyloCopy$branchMatchIndex <- branchMatchParentMatrix[1, ]
   phyloCopy$parentNumVec <- branchMatchParentMatrix[2, ]
