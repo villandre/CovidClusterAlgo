@@ -230,8 +230,7 @@ gen.priors.control <- function() {
        clusterList <- getMRCAclustersRcpp(
          parentNumVec = phyloAndTransTree$parentNumVec,
          childrenNumList = phyloAndTransTree$childrenNumList,
-         branchMatchIndexVec = phyloAndTransTree$branchMatchIndex,
-         branchLengthsVec = sapply(phyloAndTransTree$edge.length, "[[", "transmissionTree"),
+         descendedTipsList = phyloAndTransTree$descendedTips,
          subtreeIndexVec = phyloAndTransTree$subtreeIndexVec,
          vertexRegionVec = phyloAndTransTree$vertexRegionVec,
          tipNamesVec = phyloAndTransTree$tipNamesVec,
@@ -545,6 +544,7 @@ computeLogSum <- function(logValues) {
   phyloCopy$subtreeIndexVec <- c(sapply(phyloCopy$tip.label, "[[", "subtreeIndex"), sapply(phyloCopy$node.label, "[[", "subtreeIndex"))
   phyloCopy$vertexRegionVec <- c(sapply(phyloCopy$tip.label, "[[", "region"), sapply(phyloCopy$node.label, "[[", "region"))
   phyloCopy$tipNamesVec <- sapply(phyloCopy$tip.label, "[[", "name")
+  phyloCopy$descendedTips <- phangorn::Descendants(x = phyloCopy, node = 1:(length(phyloCopy$edge.length) + 1), type = "tips")
   phyloCopy$vertexOrderByDepth <- .getVertexOrderByDepth(phyloCopy)
   phyloCopy$branchMatchIndex <- branchMatchParentMatrix[1, ]
   phyloCopy$parentNumVec <- branchMatchParentMatrix[2, ]
