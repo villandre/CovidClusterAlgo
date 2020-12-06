@@ -226,7 +226,6 @@ gen.priors.control <- function() {
      output <- seq_along(seqNames)
      names(output) <- seqNames
      if (identical(phyloAndTransTree$node.label[[phyloAndTransTree$LambdaList[[subtreeIndex]]$rootNodeNum - numTips]]$region, clusterRegion)) {
-       browser()
        clusterList <- getMRCAclustersRcpp(
          parentNumVec = phyloAndTransTree$parentNumVec,
          childrenNumList = phyloAndTransTree$childrenNumList,
@@ -240,7 +239,7 @@ gen.priors.control <- function() {
          numTips = numTips,
          regionLabel = clusterRegion,
          distLimit = distLimit)
-       clusterList <- getDistanceBasedClusters(phyloAndTransTree = phyloAndTransTree, subtreeIndex = subtreeIndex, distLimit = distLimit, regionLabel = clusterRegion, criterion = clusteringCriterion)
+       # clusterList <- getDistanceBasedClusters(phyloAndTransTree = phyloAndTransTree, subtreeIndex = subtreeIndex, distLimit = distLimit, regionLabel = clusterRegion, criterion = clusteringCriterion)
        output <- integer(0)
        if (length(clusterList) > 0) {
          output <- .convertClusterListToVecOfIndices(clusterList, seqNames)
