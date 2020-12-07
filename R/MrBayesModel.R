@@ -78,38 +78,27 @@ covidCluster <- function(
   argsForSystem2 <- scriptFilenameWithFolder
   if (MrBayes.control$MPIenabled) {
     commandForSystem2 <- "mpirun"
-    argsForSystem2 <- c(paste("-np", control$numThreads), scriptFilenameWithFolder)
+    argsForSystem2 <- c(paste("-n", control$numThreads), paste(MrBayes.control$MrBayesShellCommand, scriptFilenameWithFolder))
   }
 
   system2(command = commandForSystem2, args = argsForSystem2)
   MrBayesOutputFilenamePrefix <- paste(nexusFilenameWithFolder, ".run", 1:MrBayes.control$nruns, sep = "")
-
+  numItersToDrop <- floor(MrBayes.control$burninfrac * MrBayes.control$ngen / MrBayes.control$samplefreq)
   # We read in the tree samples and parameter files
   treeSampleFiles <- paste(MrBayesOutputFilenamePrefix, ".t", sep = "")
-  treeSamples <- lapply(treeSampleFiles, ape::read.nexus)
+  treeSamples <- lapply(treeSampleFiles, function(filename) {
+    trees <- ape::read.nexus(filename)
+    trees[(numItersToDrop + 1):length(trees)]
+  }) # We read the two parallel chains. Note: the burnin fraction is only applied for diagnostics.
   # We also read in associated parameter values...
-  parameterValuesFiles <- paste(MrBayesOutputFilenamePrefix, ".p", sep = "")
-  parameterValues <- .formatParameterFiles(parameterValuesFiles)
-  mergedChains <- do.call("c", treeSamples)
-  unstandardisedWeights <- (parameterValues$logLik + parameterValues$logPrior)
-  standardisedWeights <- unstandardisedWeights/sum(unstandardisedWeights)
-  # subtreeClusterFun <- function(phyloAndTransTree, subtreeIndex, distLimit, clusterRegion, clusteringCriterion) {
-  #   numTips <- length(phyloAndTransTree$tip.label)
-  #   tipsInSubtreeAndRegion <- which((sapply(phyloAndTransTree$tip.label, "[[", "region") == clusterRegion) & sapply(phyloAndTransTree$tip.label, "[[", "subtreeIndex") == subtreeIndex)
-  #   seqNames <- sapply(tipsInSubtreeAndRegion, function(tipNum) phyloAndTransTree$tip.label[[tipNum]]$name)
-  #   output <- seq_along(seqNames)
-  #   names(output) <- seqNames
-  #   if (identical(phyloAndTransTree$node.label[[phyloAndTransTree$LambdaList[[subtreeIndex]]$rootNodeNum - numTips]]$region, clusterRegion)) {
-  #     clusterList <- getDistanceBasedClusters(phyloAndTransTree = phyloAndTransTree, subtreeIndex = subtreeIndex, distLimit = distLimit, regionLabel = clusterRegion, criterion = clusteringCriterion)
-  #     output <- integer(0)
-  #     if (length(clusterList) > 0) {
-  #       output <- .convertClusterListToVecOfIndices(clusterList, seqNames)
-  #     }
-  #   }
-  #   output
-  # }
 
-  .computeClusMembershipDistribution(phyloList = mergedChains, targetRegion = clusterRegion, logWeights =  standardisedWeights, timestamps = seqsTimestampsPOSIXct, regionStamps = seqsRegionStamps, clockRate = perSiteClockRate, rootTime = estRootTime, covidCluster.control = control, priors.control = priors.control)
+  parameterValuesFiles <- paste(MrBayesOutputFilenamePrefix, ".p", sep = "")
+  parameterValues <- .formatParameterFiles(parameterValuesFiles, MrBayes.control)
+  mergedChains <- do.call("c", treeSamples)
+  unstandardisedLogWeights <- (parameterValues$logLik + parameterValues$logPrior)
+  standardisedLogWeights <- unstandardisedLogWeights - computeLogSum(unstandardisedLogWeights)
+
+  .computeClusMembershipDistribution(phyloList = mergedChains, targetRegion = clusterRegion, logWeights = standardisedLogWeights, timestamps = seqsTimestampsPOSIXct, regionStamps = seqsRegionStamps, clockRate = perSiteClockRate, rootTime = estRootTime, covidCluster.control = control, priors.control = priors.control)
 }
 
 gen.covidCluster.control <- function(lengthForNullExtBranchesInPhylo = 1e-8, numReplicatesForClusMemScoring = 5000, clusIndReportDomainSize = 10, numThreads = 1) {
@@ -201,8 +190,12 @@ gen.priors.control <- function() {
   paste("begin mrbayes;\n set autoclose=yes nowarn=yes seed=", control$seed, " swapseed=", control$swapseed, ";\n execute ", nexusDataFilename, ";\n lset nst=", control$nst, " rates=", control$rates, ";\n outgroup ", outgroup, ";\n set usebeagle=", control$usebeagle, " beaglescaling=", control$beaglescaling," beaglesse=", control$beaglesse, ";\n mcmc nruns=", control$nruns, " nchains=", control$nchains, " ngen=", control$ngen, " samplefreq=", control$samplefreq, " diagnfreq=", control$diagnfreq, " printfreq=", control$printfreq, " append=no;\n sump relburnin=yes burninfrac=", control$burninfrac, ";\n end;", sep = "")
 }
 
-.formatParameterFiles <- function(filenames) {
-  parameterTables <- lapply(filenames, read.table, header = TRUE, sep = "\t", skip = 1)
+.formatParameterFiles <- function(filenames, control) {
+  numItersToDrop <- floor(control$burninfrac * control$ngen / control$samplefreq)
+  parameterTables <- lapply(filenames, function(filename) {
+    paraTable <- read.table(file = filename, header = TRUE, sep = "\t", skip = 1)
+    paraTable[-(1:numItersToDrop), ]
+  })
   mergedTables <- do.call("rbind", parameterTables)
   list(logLik = mergedTables$LnL, logPrior = mergedTables$LnPr, treeLength = mergedTables$TL, evoPars = mergedTables[ , -(1:4)])
 }
