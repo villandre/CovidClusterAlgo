@@ -138,7 +138,7 @@ gen.priors.control <- function() {
 .computeClusMembershipDistribution <- function(phyloList, targetRegion, logWeights, timestamps, regionStamps, clockRate, rootTime, covidCluster.control, priors.control) {
   timestampsInDays <- as.numeric(timestamps)/86400
   names(timestampsInDays) <- names(timestamps)
-  phyloAndTransTreeList <- lapply(phyloList, .genStartPhyloAndTransTree, timestampsInDays = timestampsInDays, regionStamps = regionStamps, logClockRatePriorMean = clockRate, estRootTime = rootTime, control = covidCluster.control)
+  phyloAndTransTreeList <- lapply(phyloList, .genStartPhyloAndTransTree, timestampsInDays = timestampsInDays, regionStamps = regionStamps, logClockRatePriorMean = log(clockRate), estRootTime = rootTime, control = covidCluster.control)
   phyloAndTransTreeList <- lapply(phyloAndTransTreeList, .incrementPhylo)
   for (i in seq_along(logWeights)) {
     phyloAndTransTreeList[[i]]$logWeight <- logWeights[[i]]
@@ -351,6 +351,7 @@ computeLogSum <- function(logValues) {
       }
     }
   }
+
   phyloAndTransTree$LambdaList <- lapply(seq_along(subtreeRootNodes), function(i) list(Lambda = NULL, rootNodeNum = subtreeRootNodes[[i]]))
   coalRates <- sapply(seq_along(phyloAndTransTree$LambdaList), .computeCoalRateSubtree, phyloAndTransTree = phyloAndTransTree)
 
