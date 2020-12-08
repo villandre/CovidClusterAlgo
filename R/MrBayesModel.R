@@ -143,7 +143,6 @@ gen.priors.control <- function() {
   for (i in seq_along(logWeights)) {
     phyloAndTransTreeList[[i]]$logWeight <- logWeights[[i]]
   }
-
   funToComputeDistribCondOnPhylo <- function(phyloAndTransTree, estRootTime, control) {
     logScalingFactor <- phyloAndTransTree$logWeight
     distrib <- .computeCondClusterScore(phyloAndTransTree = phyloAndTransTree, estRootTime = estRootTime, control = control)
@@ -272,10 +271,10 @@ gen.priors.control <- function() {
 .computeCondClusterScore <- function(phyloAndTransTree, estRootTime, control) {
   n <- control$numReplicatesForClusMemScoring
   clustersAndScoresBySubtree <- .computeCondClusterScoreBySubtree(phyloAndTransTree = phyloAndTransTree, n = n, estRootTime = estRootTime, control = control)
-  .combineRegionalEstimatesAndScores(clustersAndScoresBySubtree)
+  .combineRegionalEstimatesAndScores(clustersAndScoresBySubtree, control = control)
 }
 
-.combineRegionalEstimatesAndScores <- function(clusterDistribsBySubtree, control = NULL) {
+.combineRegionalEstimatesAndScores <- function(clusterDistribsBySubtree, control) {
   subtreesToKeep <- which(sapply(clusterDistribsBySubtree, function(listElement) {
     length(listElement[[1]]$config) > 0
   }))
@@ -351,7 +350,6 @@ computeLogSum <- function(logValues) {
       }
     }
   }
-
   phyloAndTransTree$LambdaList <- lapply(seq_along(subtreeRootNodes), function(i) list(Lambda = NULL, rootNodeNum = subtreeRootNodes[[i]]))
   coalRates <- sapply(seq_along(phyloAndTransTree$LambdaList), .computeCoalRateSubtree, phyloAndTransTree = phyloAndTransTree)
 
