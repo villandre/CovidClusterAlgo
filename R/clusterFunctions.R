@@ -233,31 +233,40 @@ phylo <- function(edge, edge.length, tip.label, node.label = NULL) {
 }
 
 .nodeTimesSubtreeLogPriorFun <- function(phyloAndTransTree, subtreeIndex, estRootTime, control) {
+  numTips <- length(phyloAndTransTree$tip.label)
   Lambda <- phyloAndTransTree$LambdaList[[subtreeIndex]]$Lambda
-  subtreeIndices <- sapply(phyloAndTransTree$node.label, "[[", "subtreeIndex")
-  nodesInSubtreeNums <- which(subtreeIndices == subtreeIndex) + length(phyloAndTransTree$tip.label)
-  getTipTimesList <- function(nodeNum) {
-    # childrenNums <- phyloAndTransTree$edge[which(nodeNum == phyloAndTransTree$edge[ , 1]), 2]
-    childrenNums <- phyloAndTransTree$childrenNumList[[nodeNum]]
-    childrenSubtreeIndices <- sapply(childrenNums, function(childNum) {
-      if (childNum <= length(phyloAndTransTree$tip.label)) {
-        return(phyloAndTransTree$tip.label[[childNum]]$subtreeIndex)
-      } else {
-        return(phyloAndTransTree$node.label[[childNum - length(phyloAndTransTree$tip.label)]]$subtreeIndex)
-      }
-    })
-    childrenTimes <- sapply(childrenNums, function(childNum) {
-      if (childNum <= length(phyloAndTransTree$tip.label)) {
-        return(phyloAndTransTree$tip.label[[childNum]]$time)
-      } else {
-        return(phyloAndTransTree$node.label[[childNum - length(phyloAndTransTree$tip.label)]]$time)
-      }
-    })
-    childrenTimes[((childrenNums > ape::Ntip(phyloAndTransTree)) & (childrenSubtreeIndices != subtreeIndex)) | (childrenNums <= length(phyloAndTransTree$tip.label))]
-  }
-  tipTimesList <- lapply(nodesInSubtreeNums, getTipTimesList) # The function identifies tips of the *subtree* without having to break up the complete tree into separate components. In this case, a tip either corresponds to a tip in the complete tree, or to an internal node belonging to another subtree supported by a parent that belongs to the subtree numbered subtreeIndex, which represents an introduction of the virus into a new region.
-  tipTimes <- do.call("c", tipTimesList)
-  nodeTimes <- sapply(nodesInSubtreeNums, function(x) phyloAndTransTree$node.label[[x - length(phyloAndTransTree$tip.label)]]$time)
+
+  # getTipTimesList <- function(nodeNum) {
+  #   # childrenNums <- phyloAndTransTree$edge[which(nodeNum == phyloAndTransTree$edge[ , 1]), 2]
+  #   childrenNums <- phyloAndTransTree$childrenNumList[[nodeNum]]
+  #   childrenSubtreeIndices <- sapply(childrenNums, function(childNum) {
+  #     if (childNum <= length(phyloAndTransTree$tip.label)) {
+  #       return(phyloAndTransTree$tip.label[[childNum]]$subtreeIndex)
+  #     } else {
+  #       return(phyloAndTransTree$node.label[[childNum - length(phyloAndTransTree$tip.label)]]$subtreeIndex)
+  #     }
+  #   })
+  #   childrenTimes <- sapply(childrenNums, function(childNum) {
+  #     if (childNum <= length(phyloAndTransTree$tip.label)) {
+  #       return(phyloAndTransTree$tip.label[[childNum]]$time)
+  #     } else {
+  #       return(phyloAndTransTree$node.label[[childNum - length(phyloAndTransTree$tip.label)]]$time)
+  #     }
+  #   })
+  #   childrenTimes[((childrenNums > ape::Ntip(phyloAndTransTree)) & (childrenSubtreeIndices != subtreeIndex)) | (childrenNums <= length(phyloAndTransTree$tip.label))]
+  # }
+  # tipTimesList <- lapply(nodesInSubtreeNums, getTipTimesList) # The function identifies tips of the *subtree* without having to break up the complete tree into separate components. In this case, a tip either corresponds to a tip in the complete tree, or to an internal node belonging to another subtree supported by a parent that belongs to the subtree numbered subtreeIndex, which represents an introduction of the virus into a new region.
+  # tipTimes <- do.call("c", tipTimesList)
+  tipTimes <- sapply(phyloAndTransTree$tipNumbersBySubtree[[subtreeIndex]], function(vertexNum) {
+    returnValue <- NULL
+    if (vertexNum <= numTips) {
+      returnValue <- phyloAndTransTree$tip.label[[vertexNum]]$time
+    } else {
+      returnValue <- phyloAndTransTree$node.label[[vertexNum - numTips]]$time
+    }
+    returnValue
+  })
+  nodeTimes <- sapply(phyloAndTransTree$nodesInSubtreeNums[[subtreeIndex]], function(x) phyloAndTransTree$node.label[[x - numTips]]$time)
   nodeOrTip <- rep(c("node", "tip"), c(length(nodeTimes), length(tipTimes)))
   timesToConsider <- c(nodeTimes, tipTimes)
   .funForLambdaOptim(logLambda = log(Lambda), times = timesToConsider, nodeOrTip = nodeOrTip)

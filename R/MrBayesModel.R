@@ -101,8 +101,8 @@ covidCluster <- function(
   .computeClusMembershipDistribution(phyloList = mergedChains, targetRegion = clusterRegion, logWeights = standardisedLogWeights, timestamps = seqsTimestampsPOSIXct, regionStamps = seqsRegionStamps, clockRate = perSiteClockRate, rootTime = estRootTime, covidCluster.control = control, priors.control = priors.control)
 }
 
-gen.covidCluster.control <- function(lengthForNullExtBranchesInPhylo = 1e-8, numReplicatesForClusMemScoring = 5000, clusIndReportDomainSize = 10, numThreads = 1) {
-  list(lengthForNullExtBranchesInPhylo = lengthForNullExtBranchesInPhylo, numReplicatesForClusMemScoring = numReplicatesForClusMemScoring, clusIndReportDomainSize = clusIndReportDomainSize, numThreads = numThreads)
+gen.covidCluster.control <- function(lengthForNullExtBranchesInPhylo = 1e-8, numReplicatesForClusMemScoring = 5000, clusIndReportDomainSize = 10, numThreads = 1, clusterCriterion = c("mrca", "cophenetic")) {
+  list(lengthForNullExtBranchesInPhylo = lengthForNullExtBranchesInPhylo, numReplicatesForClusMemScoring = numReplicatesForClusMemScoring, clusIndReportDomainSize = clusIndReportDomainSize, numThreads = numThreads, clusterCriterion = clusterCriterion[[1]])
 }
 
 .convertClusterListToVecOfIndices <- function(clusterList, seqNames) {
@@ -139,7 +139,7 @@ gen.priors.control <- function() {
   timestampsInDays <- as.numeric(timestamps)/86400
   names(timestampsInDays) <- names(timestamps)
   phyloAndTransTreeList <- lapply(phyloList, .genStartPhyloAndTransTree, timestampsInDays = timestampsInDays, regionStamps = regionStamps, logClockRatePriorMean = log(clockRate), estRootTime = rootTime, control = covidCluster.control)
-  phyloAndTransTreeList <- lapply(phyloAndTransTreeList, .incrementPhylo)
+  phyloAndTransTreeList <- lapply(phyloAndTransTreeList, .incrementPhylo, clusterRegion = targetRegion)
   for (i in seq_along(logWeights)) {
     phyloAndTransTreeList[[i]]$logWeight <- logWeights[[i]]
   }
@@ -213,12 +213,18 @@ gen.priors.control <- function() {
      parentNumVec = phyloAndTransTree$parentNumVec - 1) # The -1 is there because this is a C++ function, and indexing starts at 0 instead of 1.
    subtreeClusterFun <- function(phyloAndTransTree, subtreeIndex, distLimit, clusterRegion, clusteringCriterion) {
      numTips <- length(phyloAndTransTree$tip.label)
-     tipsInSubtreeAndRegion <- which((sapply(phyloAndTransTree$tip.label, "[[", "region") == clusterRegion) & sapply(phyloAndTransTree$tip.label, "[[", "subtreeIndex") == subtreeIndex)
+     # tipsInSubtreeAndRegion <- which((sapply(phyloAndTransTree$tip.label, "[[", "region") == clusterRegion) & sapply(phyloAndTransTree$tip.label, "[[", "subtreeIndex") == subtreeIndex)
+     tipsInSubtreeAndRegion <- phyloAndTransTree$tipsInRegionBySubtree[[subtreeIndex]]
      seqNames <- sapply(tipsInSubtreeAndRegion, function(tipNum) phyloAndTransTree$tip.label[[tipNum]]$name)
      output <- seq_along(seqNames)
      names(output) <- seqNames
      if (identical(phyloAndTransTree$node.label[[phyloAndTransTree$LambdaList[[subtreeIndex]]$rootNodeNum - numTips]]$region, clusterRegion)) {
-       clusterList <- getMRCAclustersRcpp(
+       clusterFunction <- getMRCAclustersRcpp
+       if (control$clusterCriterion == "cophenetic") {
+         clusterFunction <- getCopheneticClustersRcpp
+       }
+       # clusterList <- getMRCAclustersRcpp(
+       clusterList <- clusterFunction(
          parentNumVec = phyloAndTransTree$parentNumVec,
          childrenNumList = phyloAndTransTree$childrenNumList,
          descendedTipsList = phyloAndTransTree$descendedTips,
@@ -517,7 +523,7 @@ computeLogSum <- function(logValues) {
   containerMatrix
 }
 
-.incrementPhylo <- function(phylogeny) {
+.incrementPhylo <- function(phylogeny, clusterRegion) {
   phyloCopy <- phylogeny
   branchMatchParentMatrix <- sapply(1:(nrow(phyloCopy$edge) + 1), function(vertexNum) {
     branchMatch <- match(vertexNum, phyloCopy$edge[ , 2])
@@ -540,5 +546,44 @@ computeLogSum <- function(logValues) {
   phyloCopy$branchMatchIndex <- branchMatchParentMatrix[1, ]
   phyloCopy$parentNumVec <- branchMatchParentMatrix[2, ]
   phyloCopy$childrenNumList <- childrenList
+
+  tipRegions <- sapply(phyloCopy$tip.label, "[[", "region")
+  tipRegionsCheck <- tipRegions == clusterRegion
+  tipSubtrees <- sapply(phyloCopy$tip.label, "[[", "subtreeIndex")
+
+  phyloCopy$tipsInRegionBySubtree <- lapply(1:max(phyloCopy$subtreeIndexVec), function(subtreeIndex) {
+    which((tipSubtrees == subtreeIndex) & tipRegionsCheck)
+  })
+
+  # This identifies the "tip" numbers for each subtree. An internal node may be a tip for a given subtree.
+  numTips <- length(phyloCopy$tip.label)
+  getTipNumbersBySubtree <- function(subtreeIndex) {
+    startNode <- phyloCopy$LambdaList[[subtreeIndex]]$rootNodeNum
+    nodeNumsForSubtree <- numeric(0)
+    nodesToCheck <- startNode
+    repeat {
+      nodeNum <- nodesToCheck[[1]]
+      nodesToCheck <- nodesToCheck[-1]
+      childrenNum <- phyloCopy$childrenNumList[[nodeNum]]
+      nodeNumsToAddTest <- sapply(childrenNum, function(childNum) {
+        childSubtree <- NULL
+        if (childNum <= numTips) {
+          childSubtree <- phyloCopy$tip.label[[childNum]]$subtreeIndex
+        } else {
+          childSubtree <- phyloCopy$node.label[[childNum - numTips]]$subtreeIndex
+        }
+        (childNum > numTips) & (childSubtree == subtreeIndex)
+      })
+      nodesToCheck <- c(nodesToCheck, childrenNum[nodeNumsToAddTest])
+      nodeNumsForSubtree <- c(nodeNumsForSubtree, childrenNum[!nodeNumsToAddTest])
+      if (length(nodesToCheck) == 0) break
+    }
+    nodeNumsForSubtree
+  }
+  phyloCopy$tipNumbersBySubtree <- lapply(seq_along(phyloCopy$LambdaList), getTipNumbersBySubtree) # The function identifies tips of the *subtree* without having to break up the complete tree into separate components. In this case, a tip either corresponds to a tip in the complete tree, or to an internal node belonging to another subtree supported by a parent that belongs to the subtree numbered subtreeIndex, which represents an introduction of the virus into a new region.
+  phyloCopy$nodesInSubtreeNums <- lapply(seq_along(phyloCopy$LambdaList), function(subtreeIndex) {
+    which(sapply(phyloCopy$node.label, "[[", "subtreeIndex") == subtreeIndex) + numTips
+  })
+
   phyloCopy
 }
