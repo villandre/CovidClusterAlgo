@@ -34,7 +34,6 @@
 #' }
 #' @export
 
-
 covidCluster <- function(
   DNAbinData,
   outgroup,
