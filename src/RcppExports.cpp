@@ -78,12 +78,30 @@ BEGIN_RCPP
     return rcpp_result_gen;
 END_RCPP
 }
+// simulateNodeTimesRcpp
+List simulateNodeTimesRcpp(uint numTips, NumericVector& baseRatePerIntroduction, IntegerVector& orderedVertices, IntegerVector& subtreeIndexVec, NumericVector& tipTimes, IntegerMatrix& edgeMatrix, List& childrenNumList);
+RcppExport SEXP _CovidCluster_simulateNodeTimesRcpp(SEXP numTipsSEXP, SEXP baseRatePerIntroductionSEXP, SEXP orderedVerticesSEXP, SEXP subtreeIndexVecSEXP, SEXP tipTimesSEXP, SEXP edgeMatrixSEXP, SEXP childrenNumListSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< uint >::type numTips(numTipsSEXP);
+    Rcpp::traits::input_parameter< NumericVector& >::type baseRatePerIntroduction(baseRatePerIntroductionSEXP);
+    Rcpp::traits::input_parameter< IntegerVector& >::type orderedVertices(orderedVerticesSEXP);
+    Rcpp::traits::input_parameter< IntegerVector& >::type subtreeIndexVec(subtreeIndexVecSEXP);
+    Rcpp::traits::input_parameter< NumericVector& >::type tipTimes(tipTimesSEXP);
+    Rcpp::traits::input_parameter< IntegerMatrix& >::type edgeMatrix(edgeMatrixSEXP);
+    Rcpp::traits::input_parameter< List& >::type childrenNumList(childrenNumListSEXP);
+    rcpp_result_gen = Rcpp::wrap(simulateNodeTimesRcpp(numTips, baseRatePerIntroduction, orderedVertices, subtreeIndexVec, tipTimes, edgeMatrix, childrenNumList));
+    return rcpp_result_gen;
+END_RCPP
+}
 
 static const R_CallMethodDef CallEntries[] = {
     {"_CovidCluster_produceDistTipsAncestorsMatrixRcpp", (DL_FUNC) &_CovidCluster_produceDistTipsAncestorsMatrixRcpp, 5},
     {"_CovidCluster_getMRCA_Rcpp", (DL_FUNC) &_CovidCluster_getMRCA_Rcpp, 3},
     {"_CovidCluster_getMRCAclustersRcpp", (DL_FUNC) &_CovidCluster_getMRCAclustersRcpp, 12},
     {"_CovidCluster_getCopheneticClustersRcpp", (DL_FUNC) &_CovidCluster_getCopheneticClustersRcpp, 12},
+    {"_CovidCluster_simulateNodeTimesRcpp", (DL_FUNC) &_CovidCluster_simulateNodeTimesRcpp, 7},
     {NULL, NULL, 0}
 };
 

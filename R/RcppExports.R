@@ -17,3 +17,7 @@ getCopheneticClustersRcpp <- function(parentNumVec, childrenNumList, descendedTi
     .Call('_CovidCluster_getCopheneticClustersRcpp', PACKAGE = 'CovidCluster', parentNumVec, childrenNumList, descendedTipsList, subtreeIndexVec, vertexRegionVec, tipNamesVec, subtreeRootNum, distTipsAncestorsMatrix, subtreeIndex, numTips, regionLabel, distLimit)
 }
 
+simulateNodeTimesRcpp <- function(numTips, baseRatePerIntroduction, orderedVertices, subtreeIndexVec, tipTimes, edgeMatrix, childrenNumList) {
+    .Call('_CovidCluster_simulateNodeTimesRcpp', PACKAGE = 'CovidCluster', numTips, baseRatePerIntroduction, orderedVertices, subtreeIndexVec, tipTimes, edgeMatrix, childrenNumList)
+}
+

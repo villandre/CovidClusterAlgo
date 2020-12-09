@@ -385,3 +385,66 @@ Rcpp::List getCopheneticClustersRcpp(
   return Rcpp::wrap(clusterList) ;
 }
 
+// [[Rcpp::export]]
+
+List simulateNodeTimesRcpp(
+    uint numTips,
+    NumericVector & baseRatePerIntroduction,
+    IntegerVector & orderedVertices,
+    IntegerVector & subtreeIndexVec,
+    NumericVector & tipTimes,
+    IntegerMatrix & edgeMatrix,
+    List & childrenNumList) {
+  std::vector<std::vector<uint>> childrenNumListTypecast ;
+  std::vector<double> vertexTimes(subtreeIndexVec.size()) ;
+  for (uint i = 0; i < tipTimes.size(); i++) {
+    vertexTimes.at(i) = tipTimes(i) ;
+  }
+
+  for (uint i = 0; i < childrenNumList.size(); i++) {
+    if (Rf_isNull(childrenNumList[i])) {
+      std::vector<uint> placeholder ; // A 0-length vector, since tips don't have children.
+      childrenNumListTypecast.push_back(placeholder) ;
+    } else {
+      std::vector<uint> vectorToInclude = Rcpp::as<std::vector<uint>>(Rcpp::as<IntegerVector>(childrenNumList[i])) ;
+      std::transform(vectorToInclude.begin(), vectorToInclude.end(), vectorToInclude.begin(),
+                     [] (uint & i) { return i - 1 ;}) ;
+      childrenNumListTypecast.push_back(vectorToInclude) ;
+    }
+  }
+  std::vector<uint> orderedNodes ;
+  for (auto & vertexNum : orderedVertices) {
+    if (vertexNum > numTips) { // R indexing, so >, not >=.
+      orderedNodes.push_back(vertexNum - 1) ; // Bringing it back to C++ indexing.
+    }
+  }
+
+  for (auto & nodeNum : orderedNodes) {
+    std::vector<uint> childrenNums = childrenNumListTypecast.at(nodeNum) ;
+    uint subtreeForMerge = subtreeIndexVec(nodeNum) ; // -1 will have to be applied for indexing
+    arma::vec childrenTimes(childrenNums.size()) ;
+    for (uint j = 0; j < childrenTimes.size(); j++) {
+      childrenTimes(j) = vertexTimes.at(childrenNums.at(j)) ;
+    }
+
+    arma::vec minChildrenTimes(1) ; // The odd setup here is due to arma::randg returning a vector.
+    minChildrenTimes(0) = min(childrenTimes) ;
+    arma::vec vecWithTimeValue = minChildrenTimes - arma::randg(1, arma::distr_param(double(1), baseRatePerIntroduction(subtreeForMerge - 1))) ;
+    vertexTimes.at(nodeNum) = vecWithTimeValue(0) ;
+  }
+
+  std::vector<double> edgeLengths(subtreeIndexVec.size() - 1) ;
+  for (uint i = 0 ; i < edgeMatrix.rows(); i++) {
+    edgeLengths.at(i) = vertexTimes.at(edgeMatrix(i, 1) - 1) - vertexTimes.at(edgeMatrix(i, 0) - 1) ;
+  }
+
+  std::vector<double> nodeTimes ;
+
+  for (uint i = numTips; i < vertexTimes.size(); i++) {
+    nodeTimes.push_back(vertexTimes.at(i)) ;
+  }
+
+  return List::create(Named("vertexTimes") = Rcpp::wrap(nodeTimes), Named("edgeLengths") = Rcpp::wrap(edgeLengths)) ;
+}
+
+

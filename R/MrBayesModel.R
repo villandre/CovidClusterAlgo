@@ -138,7 +138,13 @@ gen.priors.control <- function() {
 .computeClusMembershipDistribution <- function(phyloList, targetRegion, logWeights, timestamps, regionStamps, clockRate, rootTime, covidCluster.control, priors.control) {
   timestampsInDays <- as.numeric(timestamps)/86400
   names(timestampsInDays) <- names(timestamps)
-  phyloAndTransTreeList <- lapply(phyloList, .genStartPhyloAndTransTree, timestampsInDays = timestampsInDays, regionStamps = regionStamps, logClockRatePriorMean = log(clockRate), estRootTime = rootTime, control = covidCluster.control)
+  phyloAndTransTreeList <- cl <- NULL
+  if (covidCluster.control$numThreads > 1) {
+    cl <- parallel::makeForkCluster(covidCluster.control$numThreads)
+    phyloAndTransTreeList <- parallel::parLapply(X = phyloList, cl = cl, fun = .genStartPhyloAndTransTree, timestampsInDays = timestampsInDays, regionStamps = regionStamps, logClockRatePriorMean = log(clockRate), estRootTime = rootTime, control = covidCluster.control)
+  } else {
+    phyloAndTransTreeList <- lapply(phyloList, .genStartPhyloAndTransTree, timestampsInDays = timestampsInDays, regionStamps = regionStamps, logClockRatePriorMean = log(clockRate), estRootTime = rootTime, control = covidCluster.control)
+  }
   phyloAndTransTreeList <- lapply(phyloAndTransTreeList, .incrementPhylo, clusterRegion = targetRegion)
   for (i in seq_along(logWeights)) {
     phyloAndTransTreeList[[i]]$logWeight <- logWeights[[i]]
@@ -152,7 +158,6 @@ gen.priors.control <- function() {
     distrib
   }
   if (covidCluster.control$numThreads > 1) {
-    cl <- parallel::makeForkCluster(covidCluster.control$numThreads)
     distribCondOnPhyloList <- parallel::parLapply(cl = cl, X = phyloAndTransTreeList, fun = funToComputeDistribCondOnPhylo, estRootTime = rootTime, control = covidCluster.control)
     parallel::stopCluster(cl)
   } else {
@@ -202,14 +207,35 @@ gen.priors.control <- function() {
 # subtreeClusterFun is a function that takes a phyloAndTransTree object and a region index and produces a vector of cluster membership indices.
 
 .computeCondClusterScoreBySubtree <- function(phyloAndTransTree, n = 5000, estRootTime, control) {
- funToReplicate <- function(phyloAndTransTree, estRootTime, control) {
-   newTree <- .simulateNodeTimes(phyloAndTransTree)
-   edgeLengths <- sapply(newTree$edge.length, "[[", "transmissionTree")
-   newTree$distTipsAncestorsMatrix <- produceDistTipsAncestorsMatrixRcpp(
+
+  funToReplicate <- function(phyloAndTransTree, estRootTime, control) {
+    numTips <- length(phyloAndTransTree$tip.label)
+    coalRates <- sapply(phyloAndTransTree$LambdaList, "[[", "Lambda")
+    orderedVertices <- rev(phyloAndTransTree$vertexOrderByDepth)
+    tipTimes <- sapply(phyloAndTransTree$tip.label, "[[", "time")
+   # newTree <- .simulateNodeTimes(phyloAndTransTree)
+    nodeTimesAndEdgeLengths <- simulateNodeTimesRcpp(
+      numTips = numTips,
+      baseRatePerIntroduction = coalRates,
+      orderedVertices = orderedVertices,
+      subtreeIndexVec = phyloAndTransTree$subtreeIndexVec,
+      tipTimes = tipTimes,
+      edgeMatrix = phyloAndTransTree$edge,
+      childrenNumList = phyloAndTransTree$childrenNumList)
+    newTree <- phyloAndTransTree
+    for (i in seq_along(newTree$node.label)) {
+      newTree$node.label[[i]]$time <- nodeTimesAndEdgeLengths$vertexTimes[[i]]
+    }
+    for (i in seq_along(newTree$edge.length)) {
+      newTree$edge.length[[i]]$transmissionTree <- nodeTimesAndEdgeLengths$edgeLengths[[i]]
+    }
+    # newTree <- .addTransTreeEdgeLengths(newTree)
+    # edgeLengths <- sapply(newTree$edge.length, "[[", "transmissionTree")
+    newTree$distTipsAncestorsMatrix <- produceDistTipsAncestorsMatrixRcpp(
      numTips = length(phyloAndTransTree$tip.label),
      numNodes = length(phyloAndTransTree$node.label),
      branchMatchIndexVec = phyloAndTransTree$branchMatchIndex - 1,
-     edgeLengthsVec = edgeLengths,
+     edgeLengthsVec = nodeTimesAndEdgeLengths$edgeLengths,
      parentNumVec = phyloAndTransTree$parentNumVec - 1) # The -1 is there because this is a C++ function, and indexing starts at 0 instead of 1.
    subtreeClusterFun <- function(phyloAndTransTree, subtreeIndex, distLimit, clusterRegion, clusteringCriterion) {
      numTips <- length(phyloAndTransTree$tip.label)
