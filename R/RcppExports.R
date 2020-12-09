@@ -13,3 +13,7 @@ getMRCAclustersRcpp <- function(parentNumVec, childrenNumList, descendedTipsList
     .Call('_CovidCluster_getMRCAclustersRcpp', PACKAGE = 'CovidCluster', parentNumVec, childrenNumList, descendedTipsList, subtreeIndexVec, vertexRegionVec, tipNamesVec, subtreeRootNum, distTipsAncestorsMatrix, subtreeIndex, numTips, regionLabel, distLimit)
 }
 
+getCopheneticClustersRcpp <- function(parentNumVec, childrenNumList, descendedTipsList, subtreeIndexVec, vertexRegionVec, tipNamesVec, subtreeRootNum, distTipsAncestorsMatrix, subtreeIndex, numTips, regionLabel, distLimit) {
+    .Call('_CovidCluster_getCopheneticClustersRcpp', PACKAGE = 'CovidCluster', parentNumVec, childrenNumList, descendedTipsList, subtreeIndexVec, vertexRegionVec, tipNamesVec, subtreeRootNum, distTipsAncestorsMatrix, subtreeIndex, numTips, regionLabel, distLimit)
+}
+
