@@ -141,10 +141,12 @@ gen.priors.control <- function() {
   if (covidCluster.control$numThreads > 1) {
     cl <- parallel::makeForkCluster(covidCluster.control$numThreads)
     phyloAndTransTreeList <- parallel::parLapply(X = phyloList, cl = cl, fun = .genStartPhyloAndTransTree, timestampsInDays = timestampsInDays, regionStamps = regionStamps, logClockRatePriorMean = log(clockRate), estRootTime = rootTime, control = covidCluster.control)
+    phyloAndTransTreeList <- parallel::parLapply(X = phyloAndTransTreeList, cl = cl, fun = .incrementPhylo, clusterRegion = targetRegion)
   } else {
     phyloAndTransTreeList <- lapply(phyloList, .genStartPhyloAndTransTree, timestampsInDays = timestampsInDays, regionStamps = regionStamps, logClockRatePriorMean = log(clockRate), estRootTime = rootTime, control = covidCluster.control)
+    phyloAndTransTreeList <- lapply(phyloAndTransTreeList, .incrementPhylo, clusterRegion = targetRegion)
   }
-  phyloAndTransTreeList <- lapply(phyloAndTransTreeList, .incrementPhylo, clusterRegion = targetRegion)
+
   for (i in seq_along(logWeights)) {
     phyloAndTransTreeList[[i]]$logWeight <- logWeights[[i]]
   }
