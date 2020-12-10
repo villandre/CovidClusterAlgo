@@ -126,8 +126,8 @@ gen.covidCluster.control <- function(lengthForNullExtBranchesInPhylo = 1e-8, num
 # Chain characteristics are printed once every 500 iterations (printfreq = 500)
 # The first 20% of iterations are discarded as a burn in (burninfrac = 0.2)
 
-gen.MrBayes.control <- function(MrBayesShellCommand = "mb", nst = 6L, rates = "invgamma", ngammacat = 4L, nruns = 2L, nchains = 4L, ngen = 1000000L, samplefreq = 1000L, diagnfreq = 5000L, printfreq = 500L, burninfrac = 0.2, beaglesse = "yes", usebeagle = "no", beaglescaling = "dynamic", seed = 42L, swapseed = 1L, MPIenabled = FALSE) {
-  list(MrBayesShellCommand = MrBayesShellCommand, nst = nst, rates = rates, ngammacat = ngammacat, nruns = nruns, nchains = nchains, ngen = ngen, samplefreq = samplefreq, diagnfreq = diagnfreq, printfreq = printfreq, burninfrac = burninfrac, beaglesse = beaglesse, usebeagle = usebeagle, beaglescaling = beaglescaling, seed = seed, swapseed = swapseed, MPIenabled = MPIenabled)
+gen.MrBayes.control <- function(MrBayesShellCommand = "mb", nst = 6L, rates = "invgamma", ngammacat = 4L, nruns = 2L, nchains = 4L, ngen = 1000000L, samplefreq = 1000L, diagnfreq = 5000L, printfreq = 500L, burninfrac = 0.2, beaglesse = "yes", usebeagle = "no", beaglescaling = "dynamic", seed = 42L, swapseed = 1L, MPIenabled = FALSE, append = "no") {
+  list(MrBayesShellCommand = MrBayesShellCommand, nst = nst, rates = rates, ngammacat = ngammacat, nruns = nruns, nchains = nchains, ngen = ngen, samplefreq = samplefreq, diagnfreq = diagnfreq, printfreq = printfreq, burninfrac = burninfrac, beaglesse = beaglesse, usebeagle = usebeagle, beaglescaling = beaglescaling, seed = seed, swapseed = swapseed, MPIenabled = MPIenabled, append = append)
 }
 
 gen.priors.control <- function() {
@@ -192,7 +192,7 @@ gen.priors.control <- function() {
 }
 
 .produceMrBayesScript <- function(outgroup, nexusDataFilename, control = gen.MrBayes.control()) {
-  paste("begin mrbayes;\n set autoclose=yes nowarn=yes seed=", as.integer(control$seed), " swapseed=", as.integer(control$swapseed), ";\n execute ", nexusDataFilename, ";\n lset nst=", as.integer(control$nst), " rates=", control$rates, ";\n outgroup ", outgroup, ";\n set usebeagle=", control$usebeagle, " beaglescaling=", control$beaglescaling," beaglesse=", control$beaglesse, ";\n mcmc nruns=", as.integer(control$nruns), " nchains=", as.integer(control$nchains), " ngen=", as.integer(control$ngen), " samplefreq=", as.integer(control$samplefreq), " diagnfreq=", as.integer(control$diagnfreq), " printfreq=", as.integer(control$printfreq), " append=no;\n sump relburnin=yes burninfrac=", control$burninfrac, ";\n end;", sep = "")
+  paste("begin mrbayes;\n set autoclose=yes nowarn=yes seed=", as.integer(control$seed), " swapseed=", as.integer(control$swapseed), ";\n execute ", nexusDataFilename, ";\n lset nst=", as.integer(control$nst), " rates=", control$rates, ";\n outgroup ", outgroup, ";\n set usebeagle=", control$usebeagle, " beaglescaling=", control$beaglescaling," beaglesse=", control$beaglesse, ";\n mcmc nruns=", as.integer(control$nruns), " nchains=", as.integer(control$nchains), " ngen=", as.integer(control$ngen), " samplefreq=", as.integer(control$samplefreq), " diagnfreq=", as.integer(control$diagnfreq), " printfreq=", as.integer(control$printfreq), " append=", control$append,";\n sump relburnin=yes burninfrac=", control$burninfrac, ";\n end;", sep = "")
 }
 
 .formatParameterFiles <- function(filenames, control) {
