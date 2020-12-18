@@ -192,7 +192,7 @@ gen.priors.control <- function() {
 }
 
 .produceMrBayesScript <- function(outgroup, nexusDataFilename, control = gen.MrBayes.control()) {
-  paste("begin mrbayes;\n set autoclose=yes nowarn=yes seed=", as.integer(control$seed), " swapseed=", as.integer(control$swapseed), ";\n execute ", nexusDataFilename, ";\n lset nst=", as.integer(control$nst), " rates=", control$rates, ";\n outgroup ", outgroup, ";\n set usebeagle=", control$usebeagle, " beaglescaling=", control$beaglescaling," beaglesse=", control$beaglesse, ";\n mcmc nruns=", as.integer(control$nruns), " nchains=", as.integer(control$nchains), " ngen=", as.integer(control$ngen), " samplefreq=", as.integer(control$samplefreq), " diagnfreq=", as.integer(control$diagnfreq), " printfreq=", as.integer(control$printfreq), " append=", control$append, " temp =",  control$temp, ";\n sump relburnin=yes burninfrac=", control$burninfrac, ";\n end;", sep = "")
+  paste("begin mrbayes;\n set autoclose=yes nowarn=yes seed=", as.integer(control$seed), " swapseed=", as.integer(control$swapseed), ";\n execute ", nexusDataFilename, ";\n lset nst=", as.integer(control$nst), " rates=", control$rates, ";\n outgroup ", outgroup, ";\n set usebeagle=", control$usebeagle, " beaglescaling=", control$beaglescaling," beaglesse=", control$beaglesse, ";\n mcmc nruns=", as.integer(control$nruns), " nchains=", as.integer(control$nchains), " ngen=", as.integer(control$ngen), " samplefreq=", as.integer(control$samplefreq), " diagnfreq=", as.integer(control$diagnfreq), " printfreq=", as.integer(control$printfreq), " append=", control$append, " temp=",  control$temp, ";\n sump relburnin=yes burninfrac=", control$burninfrac, ";\n end;", sep = "")
 }
 
 .formatParameterFiles <- function(filenames, control) {
