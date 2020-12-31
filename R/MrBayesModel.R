@@ -73,35 +73,40 @@ covidCluster <- function(
   scriptFilenameWithFolder <- .writeMrBayesFiles(DNAbinData, nexusFilename, folderForMrBayesFiles, outgroup, MrBayes.control)
 
   # We call MrBayes
-  commandForSystem2 <- MrBayes.control$MrBayesShellCommand
-  argsForSystem2 <- scriptFilenameWithFolder
-  if (MrBayes.control$MPIenabled) {
-    commandForSystem2 <- "mpirun"
-    argsForSystem2 <- c(paste("-n", control$numThreads), paste(MrBayes.control$MrBayesShellCommand, scriptFilenameWithFolder))
-  }
+  if (!control$skipMrBayes) {
+    commandForSystem2 <- MrBayes.control$MrBayesShellCommand
+    argsForSystem2 <- scriptFilenameWithFolder
+    if (MrBayes.control$MPIenabled) {
+      commandForSystem2 <- "mpirun"
+      argsForSystem2 <- c(paste("-n", control$numThreads), paste(MrBayes.control$MrBayesShellCommand, scriptFilenameWithFolder))
+    }
 
-  system2(command = commandForSystem2, args = argsForSystem2)
-  MrBayesOutputFilenamePrefix <- paste(nexusFilenameWithFolder, ".run", 1:MrBayes.control$nruns, sep = "")
+    system2(command = commandForSystem2, args = argsForSystem2)
+  }
+  MrBayesOutputFilenamePrefix <- paste(nexusFilenameWithFolder, ".run1", sep = "")
   numItersToDrop <- floor(MrBayes.control$burninfrac * MrBayes.control$ngen / MrBayes.control$samplefreq)
   # We read in the tree samples and parameter files
-  treeSampleFiles <- paste(MrBayesOutputFilenamePrefix, ".t", sep = "")
-  treeSamples <- lapply(treeSampleFiles, function(filename) {
-    trees <- ape::read.nexus(filename)
-    trees[(numItersToDrop + 1):length(trees)]
-  }) # We read the two parallel chains. Note: the burnin fraction is only applied for diagnostics.
+  treeSampleFile <- paste(MrBayesOutputFilenamePrefix, ".t", sep = "")
+
+  treeSample <- ape::read.nexus(treeSampleFile)
+  itersToKeep <- seq(from = numItersToDrop + 1, to = length(treeSample), by = ceiling(1/control$MrBayesOutputThinningRate))
+  treeSample <- treeSample[itersToKeep]
   # We also read in associated parameter values...
 
-  parameterValuesFiles <- paste(MrBayesOutputFilenamePrefix, ".p", sep = "")
-  parameterValues <- .formatParameterFiles(parameterValuesFiles, MrBayes.control)
-  mergedChains <- do.call("c", treeSamples)
+  parameterValuesFile <- paste(MrBayesOutputFilenamePrefix, ".p", sep = "")
+  parameterValues <- .formatParameterFiles(parameterValuesFile, MrBayes.control)
+
   unstandardisedLogWeights <- (parameterValues$logLik + parameterValues$logPrior)
   standardisedLogWeights <- unstandardisedLogWeights - computeLogSum(unstandardisedLogWeights)
 
-  .computeClusMembershipDistribution(phyloList = mergedChains, targetRegion = clusterRegion, logWeights = standardisedLogWeights, timestamps = seqsTimestampsPOSIXct, regionStamps = seqsRegionStamps, clockRate = perSiteClockRate, rootTime = estRootTime, covidCluster.control = control, priors.control = priors.control)
+  # .computeClusMembershipDistribution(phyloList = mergedChains, targetRegion = clusterRegion, logWeights = standardisedLogWeights, timestamps = seqsTimestampsPOSIXct, regionStamps = seqsRegionStamps, clockRate = perSiteClockRate, rootTime = estRootTime, covidCluster.control = control, priors.control = priors.control)
+  clusMembershipAndWeights <- .computeClusMembershipDistribution(phyloList = treeSample, targetRegion = clusterRegion, logWeights = standardisedLogWeights, timestamps = seqsTimestampsPOSIXct, regionStamps = seqsRegionStamps, clockRate = perSiteClockRate, rootTime = estRootTime, covidCluster.control = control, priors.control = priors.control)
+  clusterAndReturnPlotObject(clusMembershipAndWeights, control = control)
+
 }
 
-gen.covidCluster.control <- function(lengthForNullExtBranchesInPhylo = 1e-8, numReplicatesForClusMemScoring = 5000, clusIndReportDomainSize = 10, numThreads = 1, clusterCriterion = c("mrca", "cophenetic")) {
-  list(lengthForNullExtBranchesInPhylo = lengthForNullExtBranchesInPhylo, numReplicatesForClusMemScoring = numReplicatesForClusMemScoring, clusIndReportDomainSize = clusIndReportDomainSize, numThreads = numThreads, clusterCriterion = clusterCriterion[[1]])
+gen.covidCluster.control <- function(lengthForNullExtBranchesInPhylo = 1e-8, numReplicatesForClusMemScoring = 5000, clusIndReportDomainSize = 10, numThreads = 1, clusterCriterion = c("mrca", "cophenetic"), skipMrBayes = FALSE, MrBayesOutputThinningRate = 1, hclustMethod = "ward.D", linkageRequirement = 0.90) {
+  list(lengthForNullExtBranchesInPhylo = lengthForNullExtBranchesInPhylo, numReplicatesForClusMemScoring = numReplicatesForClusMemScoring, clusIndReportDomainSize = clusIndReportDomainSize, numThreads = numThreads, clusterCriterion = clusterCriterion[[1]], skipMrBayes = skipMrBayes, MrBayesOutputThinningRate = MrBayesOutputThinningRate, hclustMethod = hclustMethod, linkageRequirement = linkageRequirement)
 }
 
 .convertClusterListToVecOfIndices <- function(clusterList, seqNames) {
@@ -595,4 +600,57 @@ computeLogSum <- function(logValues) {
   })
 
   phyloCopy
+}
+
+clusterAndReturnPlotObject <- function(clusMembershipListAndWeights, control) {
+  adjMats <- lapply(clusMembershipListAndWeights, function(listElement) .getCoclusterMat(listElement$config))
+  logScoresVec <- sapply(clusMembershipListAndWeights, "[[", "logScore")
+  logStandardConstant <- computeLogSum(logScoresVec)
+  logScoresVecStandard <- logScoresVec - logStandardConstant
+  summaryMat <- Reduce("+", mapply(logScore = logScoresVecStandard, adjMat = adjMats, FUN = function(logScore, adjMat) exp(logScore) * adjMat))
+  reorderedSummaryMatAndHclustObj <- reorder_cormat(summaryMat, method = control$hclustMethod) # Involves a temporary switch to a dense matrix. Should work if number of sequences to cluster is under 5,000.
+  seqNames <- names(clusMembershipListAndWeights[[1]]$config)
+  matrixToPlot <- as.data.frame(Matrix::mat2triplet(reorderedSummaryMatAndHclustObj$sparseMatrix))
+  colnames(matrixToPlot) <- c("Sequence_x", "Sequence_y", "CoclusteringRate")
+  matrixToPlot$Sequence_x <- factor(matrixToPlot$Sequence_x, levels = seq_along(seqNames), labels = seqNames)
+  matrixToPlot$Sequence_y <- factor(matrixToPlot$Sequence_y, levels = seq_along(seqNames), labels = seqNames)
+
+  plotObject <-
+    ggplot2::ggplot(data = matrixToPlot, ggplot2::aes(x = Sequence_x, y = Sequence_y, fill = CoclusteringRate)) +
+    ggplot2::geom_tile(color = "white") +
+    ggplot2::scale_fill_gradient2(low = "white", high = "red", limit = c(0,1), space = "Lab", name = "Coclustering\nrate") +
+    ggplot2::theme_minimal() +
+    ggplot2::theme(axis.text.x = ggplot2::element_text(angle = 45, vjust = 1, size = 4, hjust = 1)) +
+    ggplot2::coord_fixed()
+  hierCluster <- cutree(reorderedSummaryMatAndHclustObj$hclustObject, h = 1 - control$linkageRequirement)
+  list(
+    adjMatrix = reorderedSummaryMatAndHclustObj$sparseMatrix,
+    MAPclusters = clusMembershipListAndWeights[[which.max(logScoresVecStandard)]]$config,
+    hierarchicalClusters = , objectToPlot = plotObject)
+}
+
+.getCoclusterMat <- function(clusMembershipVector) {
+  clusterIndices <- sort(unique(clusMembershipVector))
+  getAllCombns <- function(clusIndex) {
+    indicesInClus <- which(clusMembershipVector == clusIndex)
+    combinations <- rep(indicesInClus[[1]], 2)
+    if (length(indicesInClus) > 1) {
+      combinations <- rbind(combinations, t(combn(indicesInClus, 2)))
+    }
+    combinations
+  }
+  nonZeroIndicesList <- lapply(clusterIndices, getAllCombns)
+  nonZeroIndices <- do.call("rbind", nonZeroIndicesList)
+  resultMatrix <- Matrix::sparseMatrix(i = nonZeroIndices[ , 1], j = nonZeroIndices[ , 2], dims = rep(length(clusMembershipVector), 2), symmetric = TRUE)
+  colnames(resultMatrix) <- rownames(resultMatrix) <- names(clusMembershipVector)
+  resultMatrix
+}
+
+reorder_cormat <- function(sparseCormat, method) {
+  # Use correlation between variables as distance
+  denseMatrix <- as.matrix(sparseCormat)
+  dd <- as.dist(1 - denseMatrix)
+  hc <- hclust(dd, method = method)
+  denseMatrixReordered <- denseMatrix[hc$order, hc$order]
+  list(sparseMatrix = as(denseMatrixReordered, "sparseMatrix"), hclustObject = hc)
 }
