@@ -69,11 +69,11 @@ covidCluster <- function(
   nexusFilename <- "mrbayesData.nex"
   nexusFilenameWithFolder <- paste(folderForMrBayesFiles, nexusFilename, sep = "/")
 
-  # We write necessary files to disk
-  scriptFilenameWithFolder <- .writeMrBayesFiles(DNAbinData, nexusFilename, folderForMrBayesFiles, outgroup, MrBayes.control)
-
   # We call MrBayes
   if (!control$skipMrBayes) {
+    # We write necessary files to disk
+    scriptFilenameWithFolder <- .writeMrBayesFiles(DNAbinData, nexusFilename, folderForMrBayesFiles, outgroup, MrBayes.control)
+
     commandForSystem2 <- MrBayes.control$MrBayesShellCommand
     argsForSystem2 <- scriptFilenameWithFolder
     if (MrBayes.control$MPIenabled) {
