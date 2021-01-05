@@ -609,31 +609,34 @@ clusterAndReturnPlotObject <- function(clusMembershipListAndWeights, control) {
   logScoresVecStandard <- logScoresVec - logStandardConstant
   summaryMat <- Reduce("+", mapply(logScore = logScoresVecStandard, adjMat = adjMats, FUN = function(logScore, adjMat) exp(logScore) * adjMat))
   reorderedSummaryMatAndHclustObj <- reorder_cormat(summaryMat, method = control$hclustMethod) # Involves a temporary switch to a dense matrix. Should work if number of sequences to cluster is under 5,000.
-  seqNames <- names(clusMembershipListAndWeights[[1]]$config)
-  matrixToPlot <- as.data.frame(Matrix::mat2triplet(reorderedSummaryMatAndHclustObj$sparseMatrix))
-  colnames(matrixToPlot) <- c("Sequence_x", "Sequence_y", "CoclusteringRate")
-  matrixToPlot$Sequence_x <- factor(matrixToPlot$Sequence_x, levels = seq_along(seqNames), labels = seqNames)
-  matrixToPlot$Sequence_y <- factor(matrixToPlot$Sequence_y, levels = seq_along(seqNames), labels = seqNames)
-
+  seqNames <- rownames(summaryMat)
+  frameToPlot <- as.data.frame(Matrix::mat2triplet(reorderedSummaryMatAndHclustObj$sparseMatrix))
+  colnames(frameToPlot) <- c("Sequence_x", "Sequence_y", "CoclusteringRate")
+  frameToPlot$Sequence_x <- factor(frameToPlot$Sequence_x, levels = seq_along(seqNames), labels = seqNames)
+  frameToPlot$Sequence_y <- factor(frameToPlot$Sequence_y, levels = seq_along(seqNames), labels = seqNames)
+  frameToPlot <- subset(frameToPlot, subset = CoclusteringRate > 1e-8)
+  freqTable <- table(frameToPlot$Sequence_x)
+  singletons <- names(freqTable)[which(freqTable == 1)]
+  frameToPlot <- subset(frameToPlot, subset = !(Sequence_x %in% singletons))
   plotObject <-
-    ggplot2::ggplot(data = matrixToPlot, ggplot2::aes(x = Sequence_x, y = Sequence_y, fill = CoclusteringRate)) +
+    ggplot2::ggplot(data = frameToPlot, ggplot2::aes(x = Sequence_x, y = Sequence_y, fill = CoclusteringRate)) + ggplot2::scale_x_discrete(limits = unique(frameToPlot$Sequence_x)) + ggplot2::scale_y_discrete(limits = unique(frameToPlot$Sequence_x)) +
     ggplot2::geom_tile(color = "white") +
     ggplot2::scale_fill_gradient2(low = "white", high = "red", limit = c(0,1), space = "Lab", name = "Coclustering\nrate") +
     ggplot2::theme_minimal() +
-    ggplot2::theme(axis.text.x = ggplot2::element_text(angle = 45, vjust = 1, size = 4, hjust = 1)) +
+    ggplot2::theme(axis.text.x = ggplot2::element_text(angle = 45, vjust = 1, hjust = 1)) +
     ggplot2::coord_fixed()
   hierCluster <- cutree(reorderedSummaryMatAndHclustObj$hclustObject, h = 1 - control$linkageRequirement)
   list(
     adjMatrix = reorderedSummaryMatAndHclustObj$sparseMatrix,
     MAPclusters = clusMembershipListAndWeights[[which.max(logScoresVecStandard)]]$config,
-    hierarchicalClusters = , objectToPlot = plotObject)
+    hierarchicalClusters = hierCluster, objectToPlot = plotObject)
 }
 
 .getCoclusterMat <- function(clusMembershipVector) {
   clusterIndices <- sort(unique(clusMembershipVector))
   getAllCombns <- function(clusIndex) {
     indicesInClus <- which(clusMembershipVector == clusIndex)
-    combinations <- rep(indicesInClus[[1]], 2)
+    combinations <- matrix(rep(indicesInClus, 2), ncol = 2)
     if (length(indicesInClus) > 1) {
       combinations <- rbind(combinations, t(combn(indicesInClus, 2)))
     }
