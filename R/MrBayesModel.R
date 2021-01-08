@@ -625,7 +625,7 @@ clusterAndReturnPlotObject <- function(clusMembershipListAndWeights, control) {
   plotObject <-
     ggplot2::ggplot(data = frameToPlot, ggplot2::aes(x = Sequence_x, y = Sequence_y, fill = CoclusteringRate)) + ggplot2::scale_x_discrete(limits = unique(frameToPlot$Sequence_x)) + ggplot2::scale_y_discrete(limits = unique(frameToPlot$Sequence_x)) +
     ggplot2::geom_tile(color = "white") +
-    ggplot2::scale_fill_gradient2(low = "white", high = "red", limit = c(0,1), space = "Lab", name = "Coclustering\nrate") +
+    ggplot2::scale_fill_gradient2(low = "white", high = "red", limit = c(0,1.02), space = "Lab", name = "Coclustering\nrate") +
     ggplot2::theme_minimal() +
     ggplot2::theme(axis.text.x = ggplot2::element_text(angle = 45, vjust = 1, hjust = 1)) +
     ggplot2::coord_fixed()
