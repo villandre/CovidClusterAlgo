@@ -84,17 +84,18 @@ covidCluster <- function(
     system2(command = commandForSystem2, args = argsForSystem2)
   }
   MrBayesOutputFilenamePrefix <- paste(nexusFilenameWithFolder, ".run1", sep = "")
-  numItersToDrop <- floor(MrBayes.control$burninfrac * MrBayes.control$ngen / MrBayes.control$samplefreq)
+
   # We read in the tree samples and parameter files
   treeSampleFile <- paste(MrBayesOutputFilenamePrefix, ".t", sep = "")
 
   treeSample <- ape::read.nexus(treeSampleFile)
+  numItersToDrop <- floor(MrBayes.control$burninfrac * length(treeSample))
   itersToKeep <- seq(from = numItersToDrop + 1, to = length(treeSample), by = ceiling(1/control$MrBayesOutputThinningRate))
   treeSample <- treeSample[itersToKeep]
   # We also read in associated parameter values...
 
   parameterValuesFile <- paste(MrBayesOutputFilenamePrefix, ".p", sep = "")
-  parameterValues <- .formatParameterFiles(parameterValuesFile, MrBayes.control)
+  parameterValues <- .formatParameterFiles(parameterValuesFile, itersToKeep = itersToKeep, control = MrBayes.control)
 
   unstandardisedLogWeights <- (parameterValues$logLik + parameterValues$logPrior)
   standardisedLogWeights <- unstandardisedLogWeights - computeLogSum(unstandardisedLogWeights)
@@ -145,10 +146,11 @@ gen.priors.control <- function() {
   phyloAndTransTreeList <- cl <- NULL
   if (covidCluster.control$numThreads > 1) {
     cl <- parallel::makeForkCluster(covidCluster.control$numThreads)
-    phyloAndTransTreeList <- parallel::parLapply(X = phyloList, cl = cl, fun = .genStartPhyloAndTransTree, timestampsInDays = timestampsInDays, regionStamps = regionStamps, logClockRatePriorMean = log(clockRate), estRootTime = rootTime, control = covidCluster.control)
+    # phyloAndTransTreeList <- parallel::parLapply(X = phyloList, cl = cl, fun = .genStartPhyloAndTransTree, timestampsInDays = timestampsInDays, regionStamps = regionStamps, logClockRatePriorMean = log(clockRate), estRootTime = rootTime, control = covidCluster.control)
+    phyloAndTransTreeList <- parallel::parLapply(X = phyloList, cl = cl, fun = function(listElement) tryCatch(expr = .genStartPhyloAndTransTree(phylogeny = listElement, timestampsInDays = timestampsInDays, regionStamps = regionStamps, logClockRatePriorMean = log(clockRate), estRootTime = rootTime, control = covidCluster.control), error = function(e) e))
     phyloAndTransTreeList <- parallel::parLapply(X = phyloAndTransTreeList, cl = cl, fun = .incrementPhylo, clusterRegion = targetRegion)
   } else {
-    phyloAndTransTreeList <- lapply(phyloList, .genStartPhyloAndTransTree, timestampsInDays = timestampsInDays, regionStamps = regionStamps, logClockRatePriorMean = log(clockRate), estRootTime = rootTime, control = covidCluster.control)
+    phyloAndTransTreeList <- lapply(phyloList, function(listElement) tryCatch(expr = .genStartPhyloAndTransTree(phylogeny = listElement, timestampsInDays = timestampsInDays, regionStamps = regionStamps, logClockRatePriorMean = log(clockRate), estRootTime = rootTime, control = covidCluster.control), error = function(e) e))
     phyloAndTransTreeList <- lapply(phyloAndTransTreeList, .incrementPhylo, clusterRegion = targetRegion)
   }
 
@@ -163,13 +165,15 @@ gen.priors.control <- function() {
     }
     distrib
   }
+  distribCondOnPhyloList <- NULL
   if (covidCluster.control$numThreads > 1) {
-    distribCondOnPhyloList <- parallel::parLapply(cl = cl, X = phyloAndTransTreeList, fun = funToComputeDistribCondOnPhylo, estRootTime = rootTime, control = covidCluster.control)
+    distribCondOnPhyloList <- parallel::parLapply(cl = cl, X = phyloAndTransTreeList, fun = function(listElement) tryCatch(expr = funToComputeDistribCondOnPhylo(phyloAndTransTree = listElement, estRootTime = rootTime, control = covidCluster.control), error = function(e) e))
     parallel::stopCluster(cl)
   } else {
-  distribCondOnPhyloList <- lapply(phyloAndTransTreeList, funToComputeDistribCondOnPhylo, estRootTime = rootTime, control = covidCluster.control)
+  distribCondOnPhyloList <- lapply(phyloAndTransTreeList, FUN = function(listElement) tryCatch(expr = funToComputeDistribCondOnPhylo(phyloAndTransTree = listElement, estRootTime = rootTime, control = covidCluster.control), error = function(e) e))
   }
-  combinedDistribs <- do.call("c", distribCondOnPhyloList)
+  indicesToKeep <- sapply(distribCondOnPhyloList, FUN = function(listElement) !("error" %in% class(listElement)))
+  combinedDistribs <- do.call("c", distribCondOnPhyloList[indicesToKeep])
   namesForOrder <- names(combinedDistribs[[1]]$config)
   for (i in seq_along(combinedDistribs)) {
     combinedDistribs[[i]]$config <- .standardiseClusterIndices(combinedDistribs[[i]]$config[namesForOrder])
@@ -200,11 +204,10 @@ gen.priors.control <- function() {
   paste("begin mrbayes;\n set autoclose=yes nowarn=yes seed=", as.integer(control$seed), " swapseed=", as.integer(control$swapseed), ";\n execute ", nexusDataFilename, ";\n lset nst=", as.integer(control$nst), " rates=", control$rates, ";\n outgroup ", outgroup, ";\n set usebeagle=", control$usebeagle, " beaglescaling=", control$beaglescaling," beaglesse=", control$beaglesse, ";\n mcmc nruns=", as.integer(control$nruns), " nchains=", as.integer(control$nchains), " ngen=", as.integer(control$ngen), " samplefreq=", as.integer(control$samplefreq), " diagnfreq=", as.integer(control$diagnfreq), " printfreq=", as.integer(control$printfreq), " append=", control$append, " temp=",  control$temp, ";\n sump relburnin=yes burninfrac=", control$burninfrac, ";\n end;", sep = "")
 }
 
-.formatParameterFiles <- function(filenames, control) {
-  numItersToDrop <- floor(control$burninfrac * control$ngen / control$samplefreq)
+.formatParameterFiles <- function(filenames, itersToKeep, control) {
   parameterTables <- lapply(filenames, function(filename) {
     paraTable <- read.table(file = filename, header = TRUE, sep = "\t", skip = 1)
-    paraTable[-(1:numItersToDrop), ]
+    paraTable[itersToKeep, ]
   })
   mergedTables <- do.call("rbind", parameterTables)
   list(logLik = mergedTables$LnL, logPrior = mergedTables$LnPr, treeLength = mergedTables$TL, evoPars = mergedTables[ , -(1:4)])
@@ -538,6 +541,7 @@ computeLogSum <- function(logValues) {
 }
 
 .incrementPhylo <- function(phylogeny, clusterRegion) {
+  if ("error" %in% class(phylogeny)) return(list(error = phylogeny)) # Returning a list will allow it to be incremented
   phyloCopy <- phylogeny
   branchMatchParentMatrix <- sapply(1:(nrow(phyloCopy$edge) + 1), function(vertexNum) {
     branchMatch <- match(vertexNum, phyloCopy$edge[ , 2])

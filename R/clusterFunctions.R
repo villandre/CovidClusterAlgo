@@ -529,54 +529,6 @@ getLogClockRates <- function(phyloAndTransTree) {
   adjMatrix
 }
 
-getClustersFromChains <- function(findBayesianClusterResultsList, linkageThreshold = 0.5, regionLabel, nThreads = 1) {
-  if ("chain" %in% names(findBayesianClusterResultsList)) {
-    findBayesianClusterResultsList <- list(findBayesianClusterResultsList)
-  }
-  numElements <- ape::Ntip(findBayesianClusterResultsList[[1]]$chain[[1]]$phyloAndTransTree)
-
-  seqNames <- sapply(findBayesianClusterResultsList[[1]]$chain[[1]]$phyloAndTransTree$tip.label, "[[", "name")
-  regionNames <- sapply(findBayesianClusterResultsList[[1]]$chain[[1]]$phyloAndTransTree$tip.label, "[[", "region")
-  regionSeqNames <- seqNames[regionNames == regionLabel]
-
-  getCombinedAdjacency <- function(chain) {
-    getClusterIndicesInIter <-  function(iterIndex) {
-      seqNames <- sapply(chain[[iterIndex]]$phyloAndTransTree$tip.label, "[[", "name")
-      regionNames <- sapply(chain[[iterIndex]]$phyloAndTransTree$tip.label, "[[", "region")
-      clusterVec <- getRegionClusters(chain[[iterIndex]]$phyloAndTransTree, regionLabel)
-      names(clusterVec) <- seqNames
-      vecIndicesSubset <- clusterVec[regionSeqNames]
-      sortedUniqueValues <- sort(unique(vecIndicesSubset))
-      vecIndicesSubsetRenumbered <- match(vecIndicesSubset, sortedUniqueValues)
-      names(vecIndicesSubsetRenumbered) <- names(vecIndicesSubset)
-      vecIndicesSubsetRenumbered
-    }
-    clusterIndicesPerIter <- lapply(seq_along(chain), FUN = getClusterIndicesInIter)
-
-    combinedAdjacency <- .getAdjacencyFromVec(clusterIndicesPerIter[[1]])
-    if (length(clusterIndicesPerIter) > 1) {
-      for (i in 2:length(clusterIndicesPerIter)) {
-        combinedAdjacency <- combinedAdjacency + .getAdjacencyFromVec(clusterIndicesPerIter[[i]])
-      }
-    }
-    combinedAdjacency/length(clusterIndicesPerIter)
-  }
-
-  if (nThreads == 1) {
-    adjacencyFromEachChain <- lapply(findBayesianClusterResultsList, function(result) getCombinedAdjacency(result$chain))
-  } else {
-    cl <- parallel::makePSOCKcluster(nThreads)
-    parallel::clusterEvalQ(cl = cl, expr = library(CovidCluster))
-    adjacencyFromEachChain <- parallel::parLapply(cl = cl, X = findBayesianClusterResultsList, fun = function(result) getCombinedAdjacency(result$chain))
-    parallel::stopCluster(cl)
-  }
-  adjMatrixAcrossChains <- Reduce("+", adjacencyFromEachChain)/length(adjacencyFromEachChain)
-  adjMatrixAcrossChains@x <- as.numeric(adjMatrixAcrossChains@x >= linkageThreshold)
-  roundedAdjMatGraph <- igraph::graph_from_adjacency_matrix(adjMatrixAcrossChains, weighted = NULL, "undirected")
-  modules <- igraph::cluster_walktrap(graph = roundedAdjMatGraph)
-  modules$membership
-}
-
 getDistanceBasedClusters <- function(phyloAndTransTree, subtreeIndex = NULL, distLimit, regionLabel, criterion = c("mrca", "cophenetic", "consecutive")) {
   numTips <- length(phyloAndTransTree$tip.label)
   if (!is.null(subtreeIndex)) {
