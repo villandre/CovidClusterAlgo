@@ -102,12 +102,43 @@ covidCluster <- function(
 
   # .computeClusMembershipDistribution(phyloList = mergedChains, targetRegion = clusterRegion, logWeights = standardisedLogWeights, timestamps = seqsTimestampsPOSIXct, regionStamps = seqsRegionStamps, clockRate = perSiteClockRate, rootTime = estRootTime, covidCluster.control = control, priors.control = priors.control)
   clusMembershipAndWeights <- .computeClusMembershipDistribution(phyloList = treeSample, targetRegion = clusterRegion, logWeights = standardisedLogWeights, timestamps = seqsTimestampsPOSIXct, regionStamps = seqsRegionStamps, clockRate = perSiteClockRate, rootTime = estRootTime, covidCluster.control = control, priors.control = priors.control)
-  clusterAndReturnPlotObject(clusMembershipAndWeights, control = control)
-
+  output <- produceClusters(clusMembershipAndWeights, control = control)
+  if (control$saveArgs) {
+    output$args <- mget(names(formals()))
+  }
+  output
 }
 
-gen.covidCluster.control <- function(lengthForNullExtBranchesInPhylo = 1e-8, numReplicatesForClusMemScoring = 5000, clusIndReportDomainSize = 10, numThreads = 1, clusterCriterion = c("mrca", "cophenetic"), skipMrBayes = FALSE, MrBayesOutputThinningRate = 1, hclustMethod = "ward.D", linkageRequirement = 0.90) {
-  list(lengthForNullExtBranchesInPhylo = lengthForNullExtBranchesInPhylo, numReplicatesForClusMemScoring = numReplicatesForClusMemScoring, clusIndReportDomainSize = clusIndReportDomainSize, numThreads = numThreads, clusterCriterion = clusterCriterion[[1]], skipMrBayes = skipMrBayes, MrBayesOutputThinningRate = MrBayesOutputThinningRate, hclustMethod = hclustMethod, linkageRequirement = linkageRequirement)
+gen.covidCluster.control <- function(lengthForNullExtBranchesInPhylo = 1e-8, numReplicatesForClusMemScoring = 5000, clusIndReportDomainSize = 10, numThreads = 1, clusterCriterion = c("mrca", "cophenetic"), skipMrBayes = FALSE, MrBayesOutputThinningRate = 1, hclustMethod = "single", linkageRequirement = 0.90, saveArgs = FALSE) {
+  list(lengthForNullExtBranchesInPhylo = lengthForNullExtBranchesInPhylo, numReplicatesForClusMemScoring = numReplicatesForClusMemScoring, clusIndReportDomainSize = clusIndReportDomainSize, numThreads = numThreads, clusterCriterion = clusterCriterion[[1]], skipMrBayes = skipMrBayes, MrBayesOutputThinningRate = MrBayesOutputThinningRate, hclustMethod = hclustMethod, linkageRequirement = linkageRequirement, saveArgs = saveArgs)
+}
+
+clusterFromMrBayesOutput <- function(seqsTimestampsPOSIXct, seqsRegionStamps, MrBayesTreesFilename, MrBayesParametersFilename = NULL, clusterRegion, clusterCriterion, burninFraction = 0.5, linkageRequirement, distLimit, epidemicRootTimePOSIXct, perSiteClockRate, control = gen.covidCluster.control()) {
+  perSiteClockRate <- perSiteClockRate/365 # Time is expressed in days in the code, whereas perSiteClockRate is expressed in substitutions per site per *year*.
+  estRootTime <- as.numeric(epidemicRootTimePOSIXct)/86400
+  control <- do.call("gen.covidCluster.control", control)
+  control$clusteringCriterion <- clusterCriterion
+  control$distLimit <- distLimit
+  control$clusterRegion <- clusterRegion
+
+  if (is.null(MrBayesParametersFilename)) {
+    fileRoot <- stringr::str_extract(MrBayesTreesFilename, pattern = ".*(?=\\.t$)")
+    MrBayesParametersFilename <- paste(fileRoot, ".p", sep = "")
+    if (!file.exists(MrBayesParametersFilename)) stop("Could not infer parameter values filename. Please enter value for argument MrBayesParametersFilename.")
+  }
+  treeSample <- ape::read.nexus(MrBayesTreesFilename)
+  numItersToDrop <- floor(burninFraction * length(treeSample))
+  itersToKeep <- seq(from = numItersToDrop + 1, to = length(treeSample), by = ceiling(1/control$MrBayesOutputThinningRate))
+  treeSample <- treeSample[itersToKeep]
+
+  parameterValues <- .formatParameterFiles(MrBayesParametersFilename, itersToKeep = itersToKeep)
+
+  unstandardisedLogWeights <- (parameterValues$logLik + parameterValues$logPrior)
+  standardisedLogWeights <- unstandardisedLogWeights - computeLogSum(unstandardisedLogWeights)
+
+  clusMembershipAndWeights <- .computeClusMembershipDistribution(phyloList = treeSample, targetRegion = clusterRegion, logWeights = standardisedLogWeights, timestamps = seqsTimestampsPOSIXct, regionStamps = seqsRegionStamps, clockRate = perSiteClockRate, rootTime = estRootTime, covidCluster.control = control)
+  output <- produceClusters(clusMembershipAndWeights, control = control)
+  output
 }
 
 .convertClusterListToVecOfIndices <- function(clusterList, seqNames) {
@@ -204,7 +235,7 @@ gen.priors.control <- function() {
   paste("begin mrbayes;\n set autoclose=yes nowarn=yes seed=", as.integer(control$seed), " swapseed=", as.integer(control$swapseed), ";\n execute ", nexusDataFilename, ";\n lset nst=", as.integer(control$nst), " rates=", control$rates, ";\n outgroup ", outgroup, ";\n set usebeagle=", control$usebeagle, " beaglescaling=", control$beaglescaling," beaglesse=", control$beaglesse, ";\n mcmc nruns=", as.integer(control$nruns), " nchains=", as.integer(control$nchains), " ngen=", as.integer(control$ngen), " samplefreq=", as.integer(control$samplefreq), " diagnfreq=", as.integer(control$diagnfreq), " printfreq=", as.integer(control$printfreq), " append=", control$append, " temp=",  control$temp, ";\n sump relburnin=yes burninfrac=", control$burninfrac, ";\n end;", sep = "")
 }
 
-.formatParameterFiles <- function(filenames, itersToKeep, control) {
+.formatParameterFiles <- function(filenames, itersToKeep, control = NULL) {
   parameterTables <- lapply(filenames, function(filename) {
     paraTable <- read.table(file = filename, header = TRUE, sep = "\t", skip = 1)
     paraTable[itersToKeep, ]
@@ -606,34 +637,19 @@ computeLogSum <- function(logValues) {
   phyloCopy
 }
 
-clusterAndReturnPlotObject <- function(clusMembershipListAndWeights, control) {
+produceClusters <- function(clusMembershipListAndWeights, control) {
   adjMats <- lapply(clusMembershipListAndWeights, function(listElement) .getCoclusterMat(listElement$config))
   logScoresVec <- sapply(clusMembershipListAndWeights, "[[", "logScore")
   logStandardConstant <- computeLogSum(logScoresVec)
   logScoresVecStandard <- logScoresVec - logStandardConstant
   summaryMat <- Reduce("+", mapply(logScore = logScoresVecStandard, adjMat = adjMats, FUN = function(logScore, adjMat) exp(logScore) * adjMat))
   reorderedSummaryMatAndHclustObj <- reorder_cormat(summaryMat, method = control$hclustMethod) # Involves a temporary switch to a dense matrix. Should work if number of sequences to cluster is under 5,000.
-  seqNames <- rownames(summaryMat)
-  frameToPlot <- as.data.frame(Matrix::mat2triplet(reorderedSummaryMatAndHclustObj$sparseMatrix))
-  colnames(frameToPlot) <- c("Sequence_x", "Sequence_y", "CoclusteringRate")
-  frameToPlot$Sequence_x <- factor(frameToPlot$Sequence_x, levels = seq_along(seqNames), labels = seqNames)
-  frameToPlot$Sequence_y <- factor(frameToPlot$Sequence_y, levels = seq_along(seqNames), labels = seqNames)
-  frameToPlot <- subset(frameToPlot, subset = CoclusteringRate > 1e-8)
-  freqTable <- table(frameToPlot$Sequence_x)
-  singletons <- names(freqTable)[which(freqTable == 1)]
-  frameToPlot <- subset(frameToPlot, subset = !(Sequence_x %in% singletons))
-  plotObject <-
-    ggplot2::ggplot(data = frameToPlot, ggplot2::aes(x = Sequence_x, y = Sequence_y, fill = CoclusteringRate)) + ggplot2::scale_x_discrete(limits = unique(frameToPlot$Sequence_x)) + ggplot2::scale_y_discrete(limits = unique(frameToPlot$Sequence_x)) +
-    ggplot2::geom_tile(color = "white") +
-    ggplot2::scale_fill_gradient2(low = "white", high = "red", limit = c(0,1.02), space = "Lab", name = "Coclustering\nrate") +
-    ggplot2::theme_minimal() +
-    ggplot2::theme(axis.text.x = ggplot2::element_text(angle = 45, vjust = 1, hjust = 1)) +
-    ggplot2::coord_fixed()
+
   hierCluster <- cutree(reorderedSummaryMatAndHclustObj$hclustObject, h = 1 - control$linkageRequirement)
   list(
     adjMatrix = reorderedSummaryMatAndHclustObj$sparseMatrix,
     MAPclusters = clusMembershipListAndWeights[[which.max(logScoresVecStandard)]]$config,
-    hierarchicalClusters = hierCluster, objectToPlot = plotObject)
+    hierarchicalClusters = hierCluster)
 }
 
 .getCoclusterMat <- function(clusMembershipVector) {
