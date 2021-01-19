@@ -97,11 +97,7 @@ covidCluster <- function(
   parameterValuesFile <- paste(MrBayesOutputFilenamePrefix, ".p", sep = "")
   parameterValues <- .formatParameterFiles(parameterValuesFile, itersToKeep = itersToKeep, control = MrBayes.control)
 
-  unstandardisedLogWeights <- (parameterValues$logLik + parameterValues$logPrior)
-  standardisedLogWeights <- unstandardisedLogWeights - computeLogSum(unstandardisedLogWeights)
-
-  # .computeClusMembershipDistribution(phyloList = mergedChains, targetRegion = clusterRegion, logWeights = standardisedLogWeights, timestamps = seqsTimestampsPOSIXct, regionStamps = seqsRegionStamps, clockRate = perSiteClockRate, rootTime = estRootTime, covidCluster.control = control, priors.control = priors.control)
-  clusMembershipAndWeights <- .computeClusMembershipDistribution(phyloList = treeSample, targetRegion = clusterRegion, logWeights = standardisedLogWeights, timestamps = seqsTimestampsPOSIXct, regionStamps = seqsRegionStamps, clockRate = perSiteClockRate, rootTime = estRootTime, covidCluster.control = control, priors.control = priors.control)
+  clusMembershipAndWeights <- .computeClusMembershipDistribution(phyloList = treeSample, targetRegion = clusterRegion, timestamps = seqsTimestampsPOSIXct, regionStamps = seqsRegionStamps, clockRate = perSiteClockRate, rootTime = estRootTime, covidCluster.control = control, priors.control = priors.control)
   output <- produceClusters(clusMembershipAndWeights, control = control)
   if (control$saveArgs) {
     output$args <- mget(names(formals()))
@@ -133,10 +129,7 @@ clusterFromMrBayesOutput <- function(seqsTimestampsPOSIXct, seqsRegionStamps, Mr
 
   parameterValues <- .formatParameterFiles(MrBayesParametersFilename, itersToKeep = itersToKeep)
 
-  unstandardisedLogWeights <- (parameterValues$logLik + parameterValues$logPrior)
-  standardisedLogWeights <- unstandardisedLogWeights - computeLogSum(unstandardisedLogWeights)
-
-  clusMembershipAndWeights <- .computeClusMembershipDistribution(phyloList = treeSample, targetRegion = clusterRegion, logWeights = standardisedLogWeights, timestamps = seqsTimestampsPOSIXct, regionStamps = seqsRegionStamps, clockRate = perSiteClockRate, rootTime = estRootTime, covidCluster.control = control)
+  clusMembershipAndWeights <- .computeClusMembershipDistribution(phyloList = treeSample, targetRegion = clusterRegion, timestamps = seqsTimestampsPOSIXct, regionStamps = seqsRegionStamps, clockRate = perSiteClockRate, rootTime = estRootTime, covidCluster.control = control)
   output <- produceClusters(clusMembershipAndWeights, control = control)
   output
 }
@@ -171,7 +164,7 @@ gen.priors.control <- function() {
  list()
 }
 
-.computeClusMembershipDistribution <- function(phyloList, targetRegion, logWeights, timestamps, regionStamps, clockRate, rootTime, covidCluster.control, priors.control) {
+.computeClusMembershipDistribution <- function(phyloList, targetRegion, timestamps, regionStamps, clockRate, rootTime, covidCluster.control, priors.control) {
   timestampsInDays <- as.numeric(timestamps)/86400
 
   names(timestampsInDays) <- names(timestamps)
@@ -186,16 +179,8 @@ gen.priors.control <- function() {
     phyloAndTransTreeList <- lapply(phyloAndTransTreeList, .incrementPhylo, clusterRegion = targetRegion)
   }
 
-  for (i in seq_along(logWeights)) {
-    phyloAndTransTreeList[[i]]$logWeight <- logWeights[[i]]
-  }
   funToComputeDistribCondOnPhylo <- function(phyloAndTransTree, estRootTime, control) {
-    logScalingFactor <- phyloAndTransTree$logWeight
-    distrib <- .computeCondClusterScore(phyloAndTransTree = phyloAndTransTree, estRootTime = estRootTime, control = control)
-    for (i in seq_along(distrib)) {
-      distrib[[i]]$logScore <- distrib[[i]]$logScore + logScalingFactor
-    }
-    distrib
+    .computeCondClusterScore(phyloAndTransTree = phyloAndTransTree, estRootTime = estRootTime, control = control)
   }
   distribCondOnPhyloList <- NULL
   if (covidCluster.control$numThreads > 1) {
