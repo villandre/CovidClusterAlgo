@@ -173,6 +173,7 @@ gen.priors.control <- function() {
 
 .computeClusMembershipDistribution <- function(phyloList, targetRegion, logWeights, timestamps, regionStamps, clockRate, rootTime, covidCluster.control, priors.control) {
   timestampsInDays <- as.numeric(timestamps)/86400
+
   names(timestampsInDays) <- names(timestamps)
   phyloAndTransTreeList <- cl <- NULL
   if (covidCluster.control$numThreads > 1) {
