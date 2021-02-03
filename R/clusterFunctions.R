@@ -925,7 +925,7 @@ getNodeTimes <- function(phyloAndTransTree) {
   for (i in 1:numIndices) {
     position <- match(FALSE, assignedIndices)
     valueAtPos <- clusInd[[position]]
-    posToChange <- which(clusInd == valueAtPos)
+    posToChange <- clusInd == valueAtPos
     assignedIndices[posToChange] <- TRUE
     newClusInd[posToChange] <- i
   }
