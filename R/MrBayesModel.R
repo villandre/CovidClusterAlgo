@@ -97,7 +97,7 @@ covidCluster <- function(
   parameterValuesFile <- paste(MrBayesOutputFilenamePrefix, ".p", sep = "")
   parameterValues <- .formatParameterFiles(parameterValuesFile, itersToKeep = itersToKeep, control = MrBayes.control)
 
-  clusMembershipVecList <- do.call("c", .simulateClusMembership(phyloList = treeSample, targetRegion = clusterRegion, timestamps = seqsTimestampsPOSIXct, regionStamps = seqsRegionStamps, clockRate = perSiteClockRate, rootTime = estRootTime, covidCluster.control = control, priors.control = priors.control))
+  clusMembershipVecList <- .simulateClusMembership(phyloList = treeSample, targetRegion = clusterRegion, timestamps = seqsTimestampsPOSIXct, regionStamps = seqsRegionStamps, clockRate = perSiteClockRate, rootTime = estRootTime, covidCluster.control = control, priors.control = priors.control)
   output <- produceClusters(clusMembershipVecList, control = control)
   if (control$saveArgs) {
     output$args <- mget(names(formals()))
@@ -105,8 +105,8 @@ covidCluster <- function(
   output
 }
 
-gen.covidCluster.control <- function(lengthForNullExtBranchesInPhylo = 1e-8, numReplicatesForNodeTimes = 500, numReplicatesForCoalRates = 500, clusIndReportDomainSize = 10, numThreads = 1, clusterCriterion = c("mrca", "cophenetic"), skipMrBayes = FALSE, MrBayesOutputThinningRate = 1, hclustMethod = "single", linkageRequirement = 0.90, saveArgs = FALSE, lambdaPriorCV = 3) {
-  list(lengthForNullExtBranchesInPhylo = lengthForNullExtBranchesInPhylo, numReplicatesForNodeTimes = numReplicatesForNodeTimes, clusIndReportDomainSize = clusIndReportDomainSize, numThreads = numThreads, clusterCriterion = clusterCriterion[[1]], skipMrBayes = skipMrBayes, MrBayesOutputThinningRate = MrBayesOutputThinningRate, hclustMethod = hclustMethod, linkageRequirement = linkageRequirement, saveArgs = saveArgs, lambdaPriorCV = lambdaPriorCV, numReplicatesForCoalRates = numReplicatesForCoalRates)
+gen.covidCluster.control <- function(lengthForNullExtBranchesInPhylo = 1e-8, numReplicatesForNodeTimes = 500, numReplicatesForCoalRates = 500,  numThreads = 1, clusterCriterion = c("mrca", "cophenetic"), skipMrBayes = FALSE, MrBayesOutputThinningRate = 1, hclustMethod = "single", linkageRequirement = 0.90, saveArgs = FALSE, lambdaPriorCV = 3) {
+  list(lengthForNullExtBranchesInPhylo = lengthForNullExtBranchesInPhylo, numReplicatesForNodeTimes = numReplicatesForNodeTimes,  numReplicatesForCoalRates = numReplicatesForCoalRates, numThreads = numThreads, clusterCriterion = clusterCriterion[[1]], skipMrBayes = skipMrBayes, MrBayesOutputThinningRate = MrBayesOutputThinningRate, hclustMethod = hclustMethod, linkageRequirement = linkageRequirement, saveArgs = saveArgs, lambdaPriorCV = lambdaPriorCV)
 }
 
 clusterFromMrBayesOutput <- function(seqsTimestampsPOSIXct, seqsRegionStamps, MrBayesTreesFilename, MrBayesParametersFilename = NULL, clusterRegion, clusterCriterion, burninFraction = 0.5, linkageRequirement, distLimit, epidemicRootTimePOSIXct, perSiteClockRate, control = gen.covidCluster.control()) {
@@ -129,7 +129,7 @@ clusterFromMrBayesOutput <- function(seqsTimestampsPOSIXct, seqsRegionStamps, Mr
 
   parameterValues <- .formatParameterFiles(MrBayesParametersFilename, itersToKeep = itersToKeep)
 
-  clusMembershipVecList <- do.call("c", .simulateClusMembership(phyloList = treeSample, targetRegion = clusterRegion, timestamps = seqsTimestampsPOSIXct, regionStamps = seqsRegionStamps, clockRate = perSiteClockRate, rootTime = estRootTime, covidCluster.control = control))
+  clusMembershipVecList <- .simulateClusMembership(phyloList = treeSample, targetRegion = clusterRegion, timestamps = seqsTimestampsPOSIXct, regionStamps = seqsRegionStamps, clockRate = perSiteClockRate, rootTime = estRootTime, covidCluster.control = control)
   output <- produceClusters(clusMembershipVecList, control = control)
   output
 }
@@ -187,7 +187,8 @@ gen.priors.control <- function() {
   }
   indicesToKeep <- sapply(clusMembershipCondOnPhylo, FUN = function(listElement) !("error" %in% class(listElement)))
   combinedVecs <- do.call("c", clusMembershipCondOnPhylo[indicesToKeep])
-  lapply(combinedVecs, .standardiseClusterIndices)
+  seqsInOrderNames <- names(combinedVecs[[1]])
+  lapply(combinedVecs, function(clusMemVec) .standardiseClusterIndices(clusMemVec[seqsInOrderNames]))
 }
 
 .writeMrBayesFiles <- function(DNAbinData, nexusFilename, folderForMrBayesFiles, outgroup, control) {
@@ -219,18 +220,16 @@ gen.priors.control <- function() {
 
 .simulateClustersFromStartingTree <- function(phyloAndTransTree,  estRootTime, control) {
   funToReplicate <- function(phyloAndTransTree, estRootTime, control) {
-    meanCoalRates <- sapply(phyloAndTransTree$LambdaList, "[[", "Lambda")
-    coalRates <- rnorm(n = length(phyloAndTransTree$LambdaList), mean = meanCoalRates, sd = meanCoalRates * control$lambdaPriorCV)
+    medianRates <- sapply(phyloAndTransTree$LambdaList, "[[", "Lambda")
+    # coalRates <- rnorm(n = length(phyloAndTransTree$LambdaList), mean = meanCoalRates, sd = meanCoalRates * control$lambdaPriorCV)
+    coalRates <- rlnorm(n = length(medianRates), meanlog = log(medianRates), sdlog = abs(log(medianRates)))
     for (i in seq_along(phyloAndTransTree$LambdaList)) {
       phyloAndTransTree$LambdaList[[i]]$Lambda <- coalRates[[i]]
     }
     funToReplicateInner <- function(phyloAndTransTree, estRootTime, control) {
       numTips <- length(phyloAndTransTree$tip.label)
-      meanCoalRates <- sapply(phyloAndTransTree$LambdaList, "[[", "Lambda")
-      coalRates <- rnorm(n = length(phyloAndTransTree$LambdaList), mean = meanCoalRates, sd = meanCoalRates * control$lambdaPriorCV)
       orderedVertices <- rev(phyloAndTransTree$vertexOrderByDepth)
       tipTimes <- sapply(phyloAndTransTree$tip.label, "[[", "time")
-      # newTree <- .simulateNodeTimes(phyloAndTransTree)
       nodeTimesAndEdgeLengths <- simulateNodeTimesRcpp(
         numTips = numTips,
         baseRatePerIntroduction = coalRates,
@@ -246,8 +245,6 @@ gen.priors.control <- function() {
       for (i in seq_along(newTree$edge.length)) {
         newTree$edge.length[[i]]$transmissionTree <- nodeTimesAndEdgeLengths$edgeLengths[[i]]
       }
-      # newTree <- .addTransTreeEdgeLengths(newTree)
-      # edgeLengths <- sapply(newTree$edge.length, "[[", "transmissionTree")
       newTree$distTipsAncestorsMatrix <- produceDistTipsAncestorsMatrixRcpp(
         numTips = length(phyloAndTransTree$tip.label),
         numNodes = length(phyloAndTransTree$node.label),
@@ -256,7 +253,6 @@ gen.priors.control <- function() {
         parentNumVec = phyloAndTransTree$parentNumVec - 1) # The -1 is there because this is a C++ function, and indexing starts at 0 instead of 1.
       subtreeClusterFun <- function(phyloAndTransTree, subtreeIndex, distLimit, clusterRegion, clusteringCriterion) {
         numTips <- length(phyloAndTransTree$tip.label)
-        # tipsInSubtreeAndRegion <- which((sapply(phyloAndTransTree$tip.label, "[[", "region") == clusterRegion) & sapply(phyloAndTransTree$tip.label, "[[", "subtreeIndex") == subtreeIndex)
         tipsInSubtreeAndRegion <- phyloAndTransTree$tipsInRegionBySubtree[[subtreeIndex]]
         seqNames <- sapply(tipsInSubtreeAndRegion, function(tipNum) phyloAndTransTree$tip.label[[tipNum]]$name)
         output <- seq_along(seqNames)
@@ -280,7 +276,6 @@ gen.priors.control <- function() {
             numTips = numTips,
             regionLabel = clusterRegion,
             distLimit = distLimit)
-          # clusterList <- getDistanceBasedClusters(phyloAndTransTree = phyloAndTransTree, subtreeIndex = subtreeIndex, distLimit = distLimit, regionLabel = clusterRegion, criterion = clusteringCriterion)
           output <- integer(0)
           if (length(clusterList) > 0) {
             output <- .convertClusterListToVecOfIndices(clusterList, seqNames)
@@ -289,9 +284,16 @@ gen.priors.control <- function() {
         output
       }
       clustersBySubtree <- sapply(seq_along(newTree$LambdaList), subtreeClusterFun, phyloAndTransTree = newTree, distLimit = control$distLimit, clusteringCriterion = control$clusteringCriterion, clusterRegion = control$clusterRegion)
+      shiftValue <- 0
+      for (i in 2:length(clustersBySubtree)) {
+        if (length(clustersBySubtree[[i - 1]]) > 0) {
+          shiftValue <- max(clustersBySubtree[[i - 1]])
+        }
+        clustersBySubtree[[i]] <- clustersBySubtree[[i]] + shiftValue
+      }
       do.call("c", clustersBySubtree)
     }
-    replicate(n = control$numReplicatesForCoalRates, expr = funToReplicateInner(phyloAndTransTree = phyloAndTransTree, estRootTime = estRootTime, control = control))
+    replicate(n = control$numReplicatesForCoalRates, expr = funToReplicateInner(phyloAndTransTree = phyloAndTransTree, estRootTime = estRootTime, control = control), simplify = FALSE)
   }
  do.call("c", replicate(n = control$numReplicatesForNodeTimes, funToReplicate(phyloAndTransTree, estRootTime = estRootTime, control = control), simplify = FALSE))
 }
@@ -526,9 +528,9 @@ computeLogSum <- function(logValues) {
 }
 
 produceClusters <- function(clusMembershipList, control) {
-  adjMats <- lapply(clusMembershipList, function(listElement) .getCoclusterMat(listElement$config))
+  adjMats <- lapply(clusMembershipList, .getCoclusterMat)
   clusMembershipHash <- sapply(clusMembershipList, digest::digest)
-  names(adjMats) <- clusMembershipHash # Names are potentially repeated, but it doesn't matter. When indexing by name, the first match is returned, which is what we want here.
+  names(clusMembershipList) <- clusMembershipHash # Names are potentially repeated, but it doesn't matter. When indexing by name, the first match is returned, which is what we want here.
   hashFrequencies <- table(clusMembershipHash)
   MAPclusters <- clusMembershipList[[names(hashFrequencies)[[which.max(hashFrequencies)]]]]
   cat("The MAP configuration was produced in", max(hashFrequencies), "trees out of", length(hashFrequencies), ". \n")
