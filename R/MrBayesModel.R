@@ -528,7 +528,14 @@ computeLogSum <- function(logValues) {
 }
 
 produceClusters <- function(clusMembershipList, control) {
-  adjMats <- lapply(clusMembershipList, .getCoclusterMat)
+  adjMats <- vector("list", 0)
+  if (control$numThreads > 1) {
+    cl <- parallel::makeForkCluster(control$numThreads)
+    adjMats <- parallel::parLapply(X = clusMembershipList, cl = cl, fun = .getCoclusterMat)
+    parallel::stopCluster(cl)
+  } else {
+    adjMats <- lapply(clusMembershipList, .getCoclusterMat)
+  }
   clusMembershipHash <- sapply(clusMembershipList, digest::digest)
   names(clusMembershipList) <- clusMembershipHash # Names are potentially repeated, but it doesn't matter. When indexing by name, the first match is returned, which is what we want here.
   hashFrequencies <- table(clusMembershipHash)
