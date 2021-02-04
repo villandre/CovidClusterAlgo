@@ -41,95 +41,99 @@ arma::mat produceDistTipsAncestorsMatrixRcpp(uint numTips,
   return containerMatrix ;
 }
 
-// [[Rcpp::export]]
+// The getMRCA_* functions are broken.
+// On some occasions, they can return a tip index as the MRCA when more than one tip index is provided for tipsNumVec.
 
-uint getMRCA_Rcpp(IntegerVector parentNumVec, IntegerVector tipsNumVec, uint numTips) {
-  arma::uvec parentVecArma = as<arma::uvec>(parentNumVec) ;
-  arma::uvec tipsNumVecArma = as<arma::uvec>(tipsNumVec) ;
-  arma::uvec tipsDepths(tipsNumVecArma.size()) ;
-  parentVecArma = parentVecArma - 1 ;
-  tipsNumVecArma = tipsNumVecArma - 1 ;
-  uint returnValue = numTips + 1;
-  bool allEqual = false ;
-  uint depth, currentPos ;
+// uint getMRCA_Rcpp(IntegerVector parentNumVec, IntegerVector tipsNumVec, uint numTips) {
+//   arma::uvec parentVecArma = as<arma::uvec>(parentNumVec) ;
+//   arma::uvec tipsNumVecArma = as<arma::uvec>(tipsNumVec) ;
+//   arma::uvec tipsDepths(tipsNumVecArma.size()) ;
+//   parentVecArma = parentVecArma - 1 ;
+//   tipsNumVecArma = tipsNumVecArma - 1 ;
+//   uint returnValue = numTips + 1;
+//   bool allEqual = false ;
+//   uint depth, currentPos ;
+//
+//   for (uint i = 0; i < tipsDepths.size(); i++) {
+//     depth = 0 ;
+//     currentPos = tipsNumVecArma(i) ;
+//     do {
+//       currentPos = parentVecArma(currentPos) ;
+//       depth += 1 ;
+//     } while (currentPos != numTips) ;
+//     tipsDepths(i) = depth ;
+//   }
+//   uint maxDepth = max(tipsDepths) ;
+//   arma::umat ancestorsMat(tipsNumVecArma.size(), maxDepth, arma::fill::zeros) ;
+//
+//   for (uint i = 0; i < ancestorsMat.n_rows; i++) {
+//     uint offset = maxDepth - tipsDepths(i) ;
+//     currentPos = tipsNumVecArma(i) ;
+//     for (uint currentDepth = offset; currentDepth < maxDepth; currentDepth++) {
+//       ancestorsMat(i, currentDepth) = currentPos ;
+//       currentPos = parentVecArma(currentPos) ;
+//     }
+//   }
+//
+//   // We check if all values in a column are equal.
+//   for (uint i = 0; i < ancestorsMat.n_cols; i++) {
+//     for (uint j = 0; j < ancestorsMat.n_rows - 1; j++) {
+//       allEqual = (ancestorsMat(j, i) == ancestorsMat(j + 1, i)) ;
+//       if (!allEqual) break ;
+//     }
+//     if (allEqual) {
+//       returnValue = ancestorsMat(0, i) + 1 ;
+//       break ;
+//     }
+//   }
+//
+//   return returnValue ;
+// }
 
-  for (uint i = 0; i < tipsDepths.size(); i++) {
-    depth = 0 ;
-    currentPos = tipsNumVecArma(i) ;
-    do {
-      currentPos = parentVecArma(currentPos) ;
-      depth += 1 ;
-    } while (currentPos != numTips) ;
-    tipsDepths(i) = depth ;
-  }
-  uint maxDepth = max(tipsDepths) ;
-  arma::umat ancestorsMat(tipsNumVecArma.size(), maxDepth, arma::fill::zeros) ;
-
-  for (uint i = 0; i < ancestorsMat.n_rows; i++) {
-    uint offset = maxDepth - tipsDepths(i) ;
-    currentPos = tipsNumVecArma(i) ;
-    for (uint currentDepth = offset; currentDepth < maxDepth; currentDepth++) {
-      ancestorsMat(i, currentDepth) = currentPos ;
-      currentPos = parentVecArma(currentPos) ;
-    }
-  }
-
-  // We check if all values in a column are equal.
-  for (uint i = 0; i < ancestorsMat.n_cols; i++) {
-    for (uint j = 0; j < ancestorsMat.n_rows - 1; j++) {
-      allEqual = (ancestorsMat(j, i) == ancestorsMat(j + 1, i)) ;
-      if (!allEqual) break ;
-    }
-    if (allEqual) {
-      returnValue = ancestorsMat(0, i) + 1 ;
-      break ;
-    }
-  }
-
-  return returnValue ;
-}
-
-uint getMRCA(std::vector<uint> & parentNumVec, std::vector<uint> & tipsNumVec, int & numTips) {
-  arma::uvec tipsDepths(tipsNumVec.size()) ;
-  uint returnValue = numTips ;
-  bool allEqual = false ;
-  uint depth, currentPos ;
-
-  for (uint i = 0; i < tipsDepths.size(); i++) {
-    depth = 0 ;
-    currentPos = tipsNumVec[i] ;
-    do {
-      currentPos = parentNumVec[currentPos] ;
-      depth += 1 ;
-    } while (currentPos != numTips) ;
-    tipsDepths(i) = depth ;
-  }
-  uint maxDepth = max(tipsDepths) ;
-  arma::umat ancestorsMat(tipsNumVec.size(), maxDepth, arma::fill::zeros) ;
-
-  for (uint i = 0; i < ancestorsMat.n_rows; i++) {
-    uint offset = maxDepth - tipsDepths(i) ;
-    currentPos = tipsNumVec[i] ;
-    for (uint currentDepth = offset; currentDepth < maxDepth; currentDepth++) {
-      ancestorsMat.at(i, currentDepth) = currentPos ;
-      currentPos = parentNumVec[currentPos] ;
-    }
-  }
-
-  // We check if all values in a column are equal.
-  for (uint i = 0; i < ancestorsMat.n_cols; i++) {
-    for (uint j = 0; j < ancestorsMat.n_rows - 1; j++) {
-      allEqual = (ancestorsMat.at(j, i) == ancestorsMat.at(j + 1, i)) ;
-      if (!allEqual) break ;
-    }
-    if (allEqual) {
-      returnValue = ancestorsMat.at(0, i) ;
-      break ;
-    }
-  }
-
-  return returnValue ;
-}
+// Function is bugged
+// On some occasions, they can return a tip index as the MRCA when more than one tip index is provided for tipsNumVec.
+// Fix before uncommenting and using.
+// uint getMRCA(std::vector<uint> & parentNumVec, std::vector<uint> & tipsNumVec, int & numTips) {
+//   arma::uvec tipsDepths(tipsNumVec.size()) ;
+//   uint returnValue = numTips ;
+//   bool allEqual = false ;
+//   uint depth, currentPos ;
+//
+//   for (uint i = 0; i < tipsDepths.size(); i++) {
+//     depth = 0 ;
+//     currentPos = tipsNumVec[i] ;
+//     do {
+//       currentPos = parentNumVec[currentPos] ;
+//       depth += 1 ;
+//     } while (currentPos != numTips) ;
+//     tipsDepths(i) = depth ;
+//   }
+//   uint maxDepth = max(tipsDepths) ;
+//   arma::umat ancestorsMat(tipsNumVec.size(), maxDepth, arma::fill::zeros) ;
+//
+//   for (uint i = 0; i < ancestorsMat.n_rows; i++) {
+//     uint offset = maxDepth - tipsDepths(i) ;
+//     currentPos = tipsNumVec[i] ;
+//     for (uint currentDepth = offset; currentDepth < maxDepth; currentDepth++) {
+//       ancestorsMat.at(i, currentDepth) = currentPos ;
+//       currentPos = parentNumVec[currentPos] ;
+//     }
+//   }
+//
+//   // We check if all values in a column are equal.
+//   for (uint i = 0; i < ancestorsMat.n_cols; i++) {
+//     for (uint j = 0; j < ancestorsMat.n_rows - 1; j++) {
+//       allEqual = (ancestorsMat.at(j, i) == ancestorsMat.at(j + 1, i)) ;
+//       if (!allEqual) break ;
+//     }
+//     if (allEqual) {
+//       returnValue = ancestorsMat.at(0, i) ;
+//       break ;
+//     }
+//   }
+//
+//   return returnValue ;
+// }
 
 // [[Rcpp::export]]
 
