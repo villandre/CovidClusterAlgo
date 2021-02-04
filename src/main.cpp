@@ -254,13 +254,9 @@ Rcpp::List getMRCAclustersRcpp(
       }
     }
   } while (nodesToCheck.size() > 0) ;
-<<<<<<< HEAD
-  // Rcpp::stop("Stop here! \n") ;
-=======
   // }
   // ProfilerStop() ;
   // Rcpp::stop("Stop for profiling.") ;
->>>>>>> testBranch
   return Rcpp::wrap(clusterList) ;
 }
 
