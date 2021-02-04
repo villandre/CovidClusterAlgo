@@ -3,6 +3,7 @@
 
 #include <stdio.h>
 #include <RcppArmadillo.h>
+#include <gperftools/profiler.h>
 
 using namespace Rcpp;
 
@@ -96,9 +97,9 @@ uint getMRCA(std::vector<uint> & parentNumVec, std::vector<uint> & tipsNumVec, i
 
   for (uint i = 0; i < tipsDepths.size(); i++) {
     depth = 0 ;
-    currentPos = tipsNumVec.at(i) ;
+    currentPos = tipsNumVec[i] ;
     do {
-      currentPos = parentNumVec.at(currentPos) ;
+      currentPos = parentNumVec[currentPos] ;
       depth += 1 ;
     } while (currentPos != numTips) ;
     tipsDepths(i) = depth ;
@@ -108,21 +109,21 @@ uint getMRCA(std::vector<uint> & parentNumVec, std::vector<uint> & tipsNumVec, i
 
   for (uint i = 0; i < ancestorsMat.n_rows; i++) {
     uint offset = maxDepth - tipsDepths(i) ;
-    currentPos = tipsNumVec.at(i) ;
+    currentPos = tipsNumVec[i] ;
     for (uint currentDepth = offset; currentDepth < maxDepth; currentDepth++) {
-      ancestorsMat(i, currentDepth) = currentPos ;
-      currentPos = parentNumVec.at(currentPos) ;
+      ancestorsMat.at(i, currentDepth) = currentPos ;
+      currentPos = parentNumVec[currentPos] ;
     }
   }
 
   // We check if all values in a column are equal.
   for (uint i = 0; i < ancestorsMat.n_cols; i++) {
     for (uint j = 0; j < ancestorsMat.n_rows - 1; j++) {
-      allEqual = (ancestorsMat(j, i) == ancestorsMat(j + 1, i)) ;
+      allEqual = (ancestorsMat.at(j, i) == ancestorsMat.at(j + 1, i)) ;
       if (!allEqual) break ;
     }
     if (allEqual) {
-      returnValue = ancestorsMat(0, i) ;
+      returnValue = ancestorsMat.at(0, i) ;
       break ;
     }
   }
@@ -145,6 +146,9 @@ Rcpp::List getMRCAclustersRcpp(
     int numTips,
     std::string regionLabel,
     int distLimit) {
+  // ProfilerStart("/home/luc/temp/profile.log") ;
+  // std::vector<std::vector<std::string>> clusterList ;
+  // for (uint i = 0; i < 20000; i++) {
   std::vector<std::vector<std::string>> clusterList ;
   bool incrementNodesToCheckFlag = TRUE ;
   uint nodeNumber = 0 ;
@@ -199,18 +203,13 @@ Rcpp::List getMRCAclustersRcpp(
       bool testValue ;
 
       if ((vertexRegionVec(nodeNumber) == regionLabel) & (subtreeIndexVec(nodeNumber) == subtreeIndex)) {
-        std::vector<uint> descendantTips ;
-        for (uint i = 0; i < descendedTipsListStd.at(nodeNumber).size(); i++) {
-          testValue = (tipsSubtreeIndexVec.at(descendedTipsListStd.at(nodeNumber).at(i)) == subtreeIndex) & (tipsRegionVec.at(descendedTipsListStd.at(nodeNumber).at(i)) == regionLabel) ;
-          if (testValue) descendantTips.push_back(descendedTipsListStd.at(nodeNumber).at(i)) ;
-        }
-        arma::vec distances(descendantTips.size())  ;
 
-        if (descendantTips.size() > 1) {
+        arma::vec distances(descendedTipsListStd[nodeNumber].size())  ;
+
+        if (descendedTipsListStd[nodeNumber].size() > 1) {
           // distances = dist.tips.mrca(phylogeny = transmissionTree, tipNumbers = descendantTips) ;
-          uint mrca = getMRCA(parentNumVecStd, descendantTips, numTips) ;
           for (uint i = 0 ; i < distances.size(); i++) {
-            distances(i) =  distTipsAncestorsMatrix(descendantTips.at(i), mrca - numTips) ;
+            distances(i) =  distTipsAncestorsMatrix(descendedTipsListStd[nodeNumber][i], nodeNumber - numTips) ;
           }
           bool checkValue = TRUE;
           for (uint i = 0; i < distances.size(); i++) {
@@ -221,34 +220,37 @@ Rcpp::List getMRCAclustersRcpp(
           if (checkValue) {
             std::vector<std::string> tipsToKeep(distances.size()) ;
             for (uint i = 0; i < tipsToKeep.size(); i++) {
-              tipsToKeep.at(i) = tipNamesVec(descendantTips.at(i)) ;
+              tipsToKeep[i] = tipNamesVec(descendedTipsListStd[nodeNumber][i]) ;
             }
             clusterList.push_back(tipsToKeep) ;
             incrementNodesToCheckFlag = false ; // Cluster has been found: stop exploring that section of the tree.
           }
-        } else if (descendantTips.size() == 1) {
+        } else if (descendedTipsListStd[nodeNumber].size() == 1) {
           // It is automatically a singleton that should be added...
           std::vector<std::string> tipsToKeep(1) ;
-          tipsToKeep.at(0) = tipNamesVec.at(descendantTips.at(0)) ;
+          tipsToKeep[0] = tipNamesVec.at(descendedTipsListStd[nodeNumber][0]) ;
           clusterList.push_back(tipsToKeep) ;
           incrementNodesToCheckFlag = false ;
         }
       }
     }
     if (incrementNodesToCheckFlag) {
-      std::vector<uint> nodeChildren = childrenNumListTypecast.at(nodeNumber) ;
+      std::vector<uint> nodeChildren = childrenNumListTypecast[nodeNumber] ;
       bool keepChildTest ;
 
       for (uint i = 0; i < nodeChildren.size(); i++) {
-        std::string childRegion = Rcpp::as<std::string>(vertexRegionVec(nodeChildren.at(i))) ;
-        uint childSubtree = subtreeIndexVec(nodeChildren.at(i)) ;
+        std::string childRegion = Rcpp::as<std::string>(vertexRegionVec(nodeChildren[i])) ;
+        uint childSubtree = subtreeIndexVec(nodeChildren[i]) ;
         keepChildTest = (childRegion == regionLabel) & (childSubtree == subtreeIndex) ;
         if (keepChildTest) {
-          nodesToCheck.push_back(nodeChildren.at(i)) ;
+          nodesToCheck.push_back(nodeChildren[i]) ;
         }
       }
     }
   } while (nodesToCheck.size() > 0) ;
+  // }
+  // ProfilerStop() ;
+  // Rcpp::stop("Stop for profiling.") ;
   return Rcpp::wrap(clusterList) ;
 }
 
@@ -398,7 +400,7 @@ List simulateNodeTimesRcpp(
   std::vector<std::vector<uint>> childrenNumListTypecast ;
   std::vector<double> vertexTimes(subtreeIndexVec.size()) ;
   for (uint i = 0; i < tipTimes.size(); i++) {
-    vertexTimes.at(i) = tipTimes(i) ;
+    vertexTimes[i] = tipTimes(i) ;
   }
 
   for (uint i = 0; i < childrenNumList.size(); i++) {
@@ -420,28 +422,28 @@ List simulateNodeTimesRcpp(
   }
 
   for (auto & nodeNum : orderedNodes) {
-    std::vector<uint> childrenNums = childrenNumListTypecast.at(nodeNum) ;
+    std::vector<uint> childrenNums = childrenNumListTypecast[nodeNum] ;
     uint subtreeForMerge = subtreeIndexVec(nodeNum) ; // -1 will have to be applied for indexing
     arma::vec childrenTimes(childrenNums.size()) ;
     for (uint j = 0; j < childrenTimes.size(); j++) {
-      childrenTimes(j) = vertexTimes.at(childrenNums.at(j)) ;
+      childrenTimes.at(j) = vertexTimes[childrenNums.at(j)];
     }
 
     arma::vec minChildrenTimes(1) ; // The odd setup here is due to arma::randg returning a vector.
     minChildrenTimes(0) = min(childrenTimes) ;
     arma::vec vecWithTimeValue = minChildrenTimes - arma::randg(1, arma::distr_param(double(1), baseRatePerIntroduction(subtreeForMerge - 1))) ;
-    vertexTimes.at(nodeNum) = vecWithTimeValue(0) ;
+    vertexTimes[nodeNum] = vecWithTimeValue(0) ;
   }
 
   std::vector<double> edgeLengths(subtreeIndexVec.size() - 1) ;
   for (uint i = 0 ; i < edgeMatrix.rows(); i++) {
-    edgeLengths.at(i) = vertexTimes.at(edgeMatrix(i, 1) - 1) - vertexTimes.at(edgeMatrix(i, 0) - 1) ;
+    edgeLengths[i] = vertexTimes[edgeMatrix(i, 1) - 1] - vertexTimes[edgeMatrix(i, 0) - 1] ;
   }
 
   std::vector<double> nodeTimes ;
 
   for (uint i = numTips; i < vertexTimes.size(); i++) {
-    nodeTimes.push_back(vertexTimes.at(i)) ;
+    nodeTimes.push_back(vertexTimes[i]) ;
   }
 
   return List::create(Named("vertexTimes") = Rcpp::wrap(nodeTimes), Named("edgeLengths") = Rcpp::wrap(edgeLengths)) ;
