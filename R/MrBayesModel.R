@@ -464,6 +464,7 @@ computeLogSum <- function(logValues) {
 .incrementPhylo <- function(phylogeny, clusterRegion) {
   if ("error" %in% class(phylogeny)) return(list(error = phylogeny)) # Returning a list will allow it to be incremented
   phyloCopy <- phylogeny
+  numTips <- length(phylogeny$tip.label)
   branchMatchParentMatrix <- sapply(1:(nrow(phyloCopy$edge) + 1), function(vertexNum) {
     branchMatch <- match(vertexNum, phyloCopy$edge[ , 2])
     parentNum <- phyloCopy$edge[branchMatch, 1]
@@ -480,7 +481,21 @@ computeLogSum <- function(logValues) {
   phyloCopy$subtreeIndexVec <- c(sapply(phyloCopy$tip.label, "[[", "subtreeIndex"), sapply(phyloCopy$node.label, "[[", "subtreeIndex"))
   phyloCopy$vertexRegionVec <- c(sapply(phyloCopy$tip.label, "[[", "region"), sapply(phyloCopy$node.label, "[[", "region"))
   phyloCopy$tipNamesVec <- sapply(phyloCopy$tip.label, "[[", "name")
-  phyloCopy$descendedTips <- phangorn::Descendants(x = phyloCopy, node = 1:(length(phyloCopy$edge.length) + 1), type = "tips")
+  allDescList <- phangorn::Descendants(x = phyloCopy, node = 1:(length(phyloCopy$edge.length) + 1), type = "tips")
+  funForDescTips <- function(nodeNumber) {
+    allDesc <- allDescList[[nodeNumber]]
+    if (nodeNumber > length(phyloCopy$tip.label)) {
+      nodeRegion <- phyloCopy$node.label[[nodeNumber - numTips]]$region
+      nodeSubtree <- phyloCopy$node.label[[nodeNumber - numTips]]$subtreeIndex
+      tipRegions <- sapply(allDesc, function(tipNumber) phyloCopy$tip.label[[tipNumber]]$region)
+      tipSubtrees <- sapply(allDesc, function(tipNumber) phyloCopy$tip.label[[tipNumber]]$subtreeIndex)
+      output <- allDesc[(tipSubtrees == nodeSubtree) & (tipRegions == nodeRegion)]
+    } else {
+      output <- nodeNumber
+    }
+    output
+  }
+  phyloCopy$descendedTips <- lapply(1:(length(phyloCopy$edge.length) + 1), FUN = funForDescTips)
   phyloCopy$vertexOrderByDepth <- .getVertexOrderByDepth(phyloCopy)
   phyloCopy$branchMatchIndex <- branchMatchParentMatrix[1, ]
   phyloCopy$parentNumVec <- branchMatchParentMatrix[2, ]
