@@ -5,16 +5,8 @@ produceDistTipsAncestorsMatrixRcpp <- function(numTips, numNodes, branchMatchInd
     .Call('_CovidCluster_produceDistTipsAncestorsMatrixRcpp', PACKAGE = 'CovidCluster', numTips, numNodes, branchMatchIndexVec, edgeLengthsVec, parentNumVec)
 }
 
-getMRCA_Rcpp <- function(parentNumVec, tipsNumVec, numTips) {
-    .Call('_CovidCluster_getMRCA_Rcpp', PACKAGE = 'CovidCluster', parentNumVec, tipsNumVec, numTips)
-}
-
 getMRCAclustersRcpp <- function(parentNumVec, childrenNumList, descendedTipsList, subtreeIndexVec, vertexRegionVec, tipNamesVec, subtreeRootNum, distTipsAncestorsMatrix, subtreeIndex, numTips, regionLabel, distLimit) {
     .Call('_CovidCluster_getMRCAclustersRcpp', PACKAGE = 'CovidCluster', parentNumVec, childrenNumList, descendedTipsList, subtreeIndexVec, vertexRegionVec, tipNamesVec, subtreeRootNum, distTipsAncestorsMatrix, subtreeIndex, numTips, regionLabel, distLimit)
-}
-
-getCopheneticClustersRcpp <- function(parentNumVec, childrenNumList, descendedTipsList, subtreeIndexVec, vertexRegionVec, tipNamesVec, subtreeRootNum, distTipsAncestorsMatrix, subtreeIndex, numTips, regionLabel, distLimit) {
-    .Call('_CovidCluster_getCopheneticClustersRcpp', PACKAGE = 'CovidCluster', parentNumVec, childrenNumList, descendedTipsList, subtreeIndexVec, vertexRegionVec, tipNamesVec, subtreeRootNum, distTipsAncestorsMatrix, subtreeIndex, numTips, regionLabel, distLimit)
 }
 
 simulateNodeTimesRcpp <- function(numTips, baseRatePerIntroduction, orderedVertices, subtreeIndexVec, tipTimes, edgeMatrix, childrenNumList) {

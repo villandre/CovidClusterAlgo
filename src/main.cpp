@@ -260,138 +260,137 @@ Rcpp::List getMRCAclustersRcpp(
   return Rcpp::wrap(clusterList) ;
 }
 
-// [[Rcpp::export]]
-
-Rcpp::List getCopheneticClustersRcpp(
-    IntegerVector & parentNumVec,
-    List & childrenNumList,
-    List & descendedTipsList,
-    IntegerVector & subtreeIndexVec,
-    CharacterVector & vertexRegionVec,
-    CharacterVector & tipNamesVec,
-    uint & subtreeRootNum,
-    NumericMatrix & distTipsAncestorsMatrix,
-    int subtreeIndex,
-    int numTips,
-    std::string regionLabel,
-    int distLimit) {
-  std::vector<std::vector<std::string>> clusterList ;
-  bool incrementNodesToCheckFlag = TRUE ;
-  uint nodeNumber = 0 ;
-  std::vector<uint> parentNumVecStd = Rcpp::as<std::vector<uint>>(parentNumVec) ;
-  std::transform(parentNumVecStd.begin(), parentNumVecStd.end(), parentNumVecStd.begin(),
-                 [] (uint & i) { return i - 1 ;}) ;
-  std::vector<std::vector<uint>> childrenNumListTypecast ;
-
-  for (uint i = 0; i < childrenNumList.size(); i++) {
-    if (Rf_isNull(childrenNumList[i])) {
-      std::vector<uint> placeholder ; // A 0-length vector, since tips don't have children.
-      childrenNumListTypecast.push_back(placeholder) ;
-    } else {
-      std::vector<uint> vectorToInclude = Rcpp::as<std::vector<uint>>(Rcpp::as<IntegerVector>(childrenNumList[i])) ;
-      std::transform(vectorToInclude.begin(), vectorToInclude.end(), vectorToInclude.begin(),
-                     [] (uint & i) { return i - 1 ;}) ;
-      childrenNumListTypecast.push_back(vectorToInclude) ;
-    }
-  }
-  std::vector<std::vector<uint>> descendedTipsListStd ;
-  for (uint i = 0 ; i < descendedTipsList.size() ; i++) {
-    descendedTipsListStd.push_back(Rcpp::as<std::vector<uint>>(descendedTipsList(i))) ;
-    std::transform(descendedTipsListStd.back().begin(), descendedTipsListStd.back().end(), descendedTipsListStd.back().begin(),
-                   [] (uint & i) { return i - 1 ;}) ;
-  }
-
-  std::vector<uint> tipsSubtreeIndexVec  ;
-  std::vector<std::string> tipsRegionVec ;
-  std::string currentRegion ;
-  for (uint i = 0; i < numTips; i++) {
-    tipsSubtreeIndexVec.push_back(subtreeIndexVec(i)) ;
-    currentRegion = vertexRegionVec(i) ;
-    tipsRegionVec.push_back(currentRegion) ;
-  }
-  std::string tipName ;
-  std::vector<uint> nodesToCheck ;
-  nodesToCheck.push_back(subtreeRootNum - 1) ;
-  do {
-    incrementNodesToCheckFlag = TRUE ;
-    nodeNumber = nodesToCheck.back() ;
-    nodesToCheck.pop_back() ; // We pre-emptively remove the element we are checking ;
-    if (nodeNumber < numTips) {
-      currentRegion = vertexRegionVec(nodeNumber) ;
-      if ((currentRegion == regionLabel) & (subtreeIndex == subtreeIndexVec(nodeNumber))) {
-        tipName = tipNamesVec(nodeNumber) ;
-        std::vector<std::string> outputVec ;
-        outputVec.push_back(tipName) ;
-        clusterList.push_back(outputVec) ;
-      }
-      incrementNodesToCheckFlag = false ;
-    } else {
-      bool testValue ;
-
-      if ((vertexRegionVec(nodeNumber) == regionLabel) & (subtreeIndexVec(nodeNumber) == subtreeIndex)) {
-        std::vector<uint> descendantTips ;
-        for (uint i = 0; i < descendedTipsListStd.at(nodeNumber).size(); i++) {
-          testValue = (tipsSubtreeIndexVec.at(descendedTipsListStd.at(nodeNumber).at(i)) == subtreeIndex) & (tipsRegionVec.at(descendedTipsListStd.at(nodeNumber).at(i)) == regionLabel) ;
-          if (testValue) descendantTips.push_back(descendedTipsListStd.at(nodeNumber).at(i)) ;
-        }
-
-        if (descendantTips.size() > 1) {
-          std::vector<std::vector<uint>> tipPairsVec ;
-          for (uint i = 0; i < descendantTips.size() - 1; i++) {
-            for (uint j = i + 1; j < descendantTips.size(); j++) {
-              std::vector<uint> tipPair ;
-              tipPair.push_back(descendantTips.at(i)) ;
-              tipPair.push_back(descendantTips.at(j)) ;
-              tipPairsVec.push_back(tipPair) ;
-            }
-          }
-          arma::vec distances(tipPairsVec.size()) ;
-          // distances = dist.tips.mrca(phylogeny = transmissionTree, tipNumbers = descendantTips) ;
-
-          for (uint i = 0 ; i < distances.size(); i++) {
-            uint mrca = getMRCA(parentNumVecStd, tipPairsVec.at(i), numTips) ;
-            distances(i) =  distTipsAncestorsMatrix(tipPairsVec.at(i).at(0), mrca - numTips) +
-              distTipsAncestorsMatrix(tipPairsVec.at(i).at(1), mrca - numTips) ;
-          }
-          bool checkValue = TRUE;
-          for (uint i = 0; i < distances.size(); i++) {
-            // for (auto & distValue : distances) {
-            checkValue = distances(i) < distLimit ;
-            if (!checkValue) break ;
-          }
-          if (checkValue) {
-            std::vector<std::string> tipsToKeep(distances.size()) ;
-            for (uint i = 0; i < tipsToKeep.size(); i++) {
-              tipsToKeep.at(i) = tipNamesVec(descendantTips.at(i)) ;
-            }
-            clusterList.push_back(tipsToKeep) ;
-            incrementNodesToCheckFlag = false ; // Cluster has been found: stop exploring that section of the tree.
-          }
-        } else if (descendantTips.size() == 1) {
-          // It is automatically a singleton that should be added...
-          std::vector<std::string> tipsToKeep(1) ;
-          tipsToKeep.at(0) = tipNamesVec.at(descendantTips.at(0)) ;
-          clusterList.push_back(tipsToKeep) ;
-          incrementNodesToCheckFlag = false ;
-        }
-      }
-    }
-    if (incrementNodesToCheckFlag) {
-      std::vector<uint> nodeChildren = childrenNumListTypecast.at(nodeNumber) ;
-      bool keepChildTest ;
-
-      for (uint i = 0; i < nodeChildren.size(); i++) {
-        std::string childRegion = Rcpp::as<std::string>(vertexRegionVec(nodeChildren.at(i))) ;
-        uint childSubtree = subtreeIndexVec(nodeChildren.at(i)) ;
-        keepChildTest = (childRegion == regionLabel) & (childSubtree == subtreeIndex) ;
-        if (keepChildTest) {
-          nodesToCheck.push_back(nodeChildren.at(i)) ;
-        }
-      }
-    }
-  } while (nodesToCheck.size() > 0) ;
-  return Rcpp::wrap(clusterList) ;
-}
+// TO DO: Remove call to getMRCA. Not needed anymore.
+// Rcpp::List getCopheneticClustersRcpp(
+//     IntegerVector & parentNumVec,
+//     List & childrenNumList,
+//     List & descendedTipsList,
+//     IntegerVector & subtreeIndexVec,
+//     CharacterVector & vertexRegionVec,
+//     CharacterVector & tipNamesVec,
+//     uint & subtreeRootNum,
+//     NumericMatrix & distTipsAncestorsMatrix,
+//     int subtreeIndex,
+//     int numTips,
+//     std::string regionLabel,
+//     int distLimit) {
+//   std::vector<std::vector<std::string>> clusterList ;
+//   bool incrementNodesToCheckFlag = TRUE ;
+//   uint nodeNumber = 0 ;
+//   std::vector<uint> parentNumVecStd = Rcpp::as<std::vector<uint>>(parentNumVec) ;
+//   std::transform(parentNumVecStd.begin(), parentNumVecStd.end(), parentNumVecStd.begin(),
+//                  [] (uint & i) { return i - 1 ;}) ;
+//   std::vector<std::vector<uint>> childrenNumListTypecast ;
+//
+//   for (uint i = 0; i < childrenNumList.size(); i++) {
+//     if (Rf_isNull(childrenNumList[i])) {
+//       std::vector<uint> placeholder ; // A 0-length vector, since tips don't have children.
+//       childrenNumListTypecast.push_back(placeholder) ;
+//     } else {
+//       std::vector<uint> vectorToInclude = Rcpp::as<std::vector<uint>>(Rcpp::as<IntegerVector>(childrenNumList[i])) ;
+//       std::transform(vectorToInclude.begin(), vectorToInclude.end(), vectorToInclude.begin(),
+//                      [] (uint & i) { return i - 1 ;}) ;
+//       childrenNumListTypecast.push_back(vectorToInclude) ;
+//     }
+//   }
+//   std::vector<std::vector<uint>> descendedTipsListStd ;
+//   for (uint i = 0 ; i < descendedTipsList.size() ; i++) {
+//     descendedTipsListStd.push_back(Rcpp::as<std::vector<uint>>(descendedTipsList(i))) ;
+//     std::transform(descendedTipsListStd.back().begin(), descendedTipsListStd.back().end(), descendedTipsListStd.back().begin(),
+//                    [] (uint & i) { return i - 1 ;}) ;
+//   }
+//
+//   std::vector<uint> tipsSubtreeIndexVec  ;
+//   std::vector<std::string> tipsRegionVec ;
+//   std::string currentRegion ;
+//   for (uint i = 0; i < numTips; i++) {
+//     tipsSubtreeIndexVec.push_back(subtreeIndexVec(i)) ;
+//     currentRegion = vertexRegionVec(i) ;
+//     tipsRegionVec.push_back(currentRegion) ;
+//   }
+//   std::string tipName ;
+//   std::vector<uint> nodesToCheck ;
+//   nodesToCheck.push_back(subtreeRootNum - 1) ;
+//   do {
+//     incrementNodesToCheckFlag = TRUE ;
+//     nodeNumber = nodesToCheck.back() ;
+//     nodesToCheck.pop_back() ; // We pre-emptively remove the element we are checking ;
+//     if (nodeNumber < numTips) {
+//       currentRegion = vertexRegionVec(nodeNumber) ;
+//       if ((currentRegion == regionLabel) & (subtreeIndex == subtreeIndexVec(nodeNumber))) {
+//         tipName = tipNamesVec(nodeNumber) ;
+//         std::vector<std::string> outputVec ;
+//         outputVec.push_back(tipName) ;
+//         clusterList.push_back(outputVec) ;
+//       }
+//       incrementNodesToCheckFlag = false ;
+//     } else {
+//       bool testValue ;
+//
+//       if ((vertexRegionVec(nodeNumber) == regionLabel) & (subtreeIndexVec(nodeNumber) == subtreeIndex)) {
+//         std::vector<uint> descendantTips ;
+//         for (uint i = 0; i < descendedTipsListStd.at(nodeNumber).size(); i++) {
+//           testValue = (tipsSubtreeIndexVec.at(descendedTipsListStd.at(nodeNumber).at(i)) == subtreeIndex) & (tipsRegionVec.at(descendedTipsListStd.at(nodeNumber).at(i)) == regionLabel) ;
+//           if (testValue) descendantTips.push_back(descendedTipsListStd.at(nodeNumber).at(i)) ;
+//         }
+//
+//         if (descendantTips.size() > 1) {
+//           std::vector<std::vector<uint>> tipPairsVec ;
+//           for (uint i = 0; i < descendantTips.size() - 1; i++) {
+//             for (uint j = i + 1; j < descendantTips.size(); j++) {
+//               std::vector<uint> tipPair ;
+//               tipPair.push_back(descendantTips.at(i)) ;
+//               tipPair.push_back(descendantTips.at(j)) ;
+//               tipPairsVec.push_back(tipPair) ;
+//             }
+//           }
+//           arma::vec distances(tipPairsVec.size()) ;
+//           // distances = dist.tips.mrca(phylogeny = transmissionTree, tipNumbers = descendantTips) ;
+//
+//           for (uint i = 0 ; i < distances.size(); i++) {
+//             uint mrca = getMRCA(parentNumVecStd, tipPairsVec.at(i), numTips) ;
+//             distances(i) =  distTipsAncestorsMatrix(tipPairsVec.at(i).at(0), mrca - numTips) +
+//               distTipsAncestorsMatrix(tipPairsVec.at(i).at(1), mrca - numTips) ;
+//           }
+//           bool checkValue = TRUE;
+//           for (uint i = 0; i < distances.size(); i++) {
+//             // for (auto & distValue : distances) {
+//             checkValue = distances(i) < distLimit ;
+//             if (!checkValue) break ;
+//           }
+//           if (checkValue) {
+//             std::vector<std::string> tipsToKeep(distances.size()) ;
+//             for (uint i = 0; i < tipsToKeep.size(); i++) {
+//               tipsToKeep.at(i) = tipNamesVec(descendantTips.at(i)) ;
+//             }
+//             clusterList.push_back(tipsToKeep) ;
+//             incrementNodesToCheckFlag = false ; // Cluster has been found: stop exploring that section of the tree.
+//           }
+//         } else if (descendantTips.size() == 1) {
+//           // It is automatically a singleton that should be added...
+//           std::vector<std::string> tipsToKeep(1) ;
+//           tipsToKeep.at(0) = tipNamesVec.at(descendantTips.at(0)) ;
+//           clusterList.push_back(tipsToKeep) ;
+//           incrementNodesToCheckFlag = false ;
+//         }
+//       }
+//     }
+//     if (incrementNodesToCheckFlag) {
+//       std::vector<uint> nodeChildren = childrenNumListTypecast.at(nodeNumber) ;
+//       bool keepChildTest ;
+//
+//       for (uint i = 0; i < nodeChildren.size(); i++) {
+//         std::string childRegion = Rcpp::as<std::string>(vertexRegionVec(nodeChildren.at(i))) ;
+//         uint childSubtree = subtreeIndexVec(nodeChildren.at(i)) ;
+//         keepChildTest = (childRegion == regionLabel) & (childSubtree == subtreeIndex) ;
+//         if (keepChildTest) {
+//           nodesToCheck.push_back(nodeChildren.at(i)) ;
+//         }
+//       }
+//     }
+//   } while (nodesToCheck.size() > 0) ;
+//   return Rcpp::wrap(clusterList) ;
+// }
 
 // [[Rcpp::export]]
 
