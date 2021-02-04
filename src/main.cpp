@@ -224,6 +224,8 @@ Rcpp::List getMRCAclustersRcpp(
               tipsToKeep.at(i) = tipNamesVec(descendantTips.at(i)) ;
             }
             clusterList.push_back(tipsToKeep) ;
+            // distances.print("Distances in cluster:") ;
+            // for (auto & i : tipsToKeep) Rcout << "Tip in cluster" << i << std::endl ;
             incrementNodesToCheckFlag = false ; // Cluster has been found: stop exploring that section of the tree.
           }
         } else if (descendantTips.size() == 1) {
@@ -249,6 +251,7 @@ Rcpp::List getMRCAclustersRcpp(
       }
     }
   } while (nodesToCheck.size() > 0) ;
+  // Rcpp::stop("Stop here! \n") ;
   return Rcpp::wrap(clusterList) ;
 }
 
