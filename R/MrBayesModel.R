@@ -543,13 +543,23 @@ computeLogSum <- function(logValues) {
 }
 
 produceClusters <- function(clusMembershipList, control) {
-  adjMats <- vector("list", 0)
+  initMatForReduce <- Matrix::sparseMatrix(i = seq_along(clusMembershipList[[1]]), j = seq_along(clusMembershipList[[1]]), x = rep(0, length(clusMembershipList[[1]])), dims = rep(length(clusMembershipList[[1]]), 2), symmetric = TRUE)
+  funForReduce <- function(adjMat, clusMemVec) {
+    adjMat + .getCoclusterMat(clusMemVec)
+  }
+  summaryMat <- NULL
   if (control$numThreads > 1) {
     cl <- parallel::makeForkCluster(control$numThreads)
-    adjMats <- parallel::parLapply(X = clusMembershipList, cl = cl, fun = .getCoclusterMat)
+    clusAssignment <- rep_len(1:control$numThreads, length.out = length(clusMembershipList))
+    getAdjMatSumByCore <- function(coreNumber) {
+      Reduce(f = "funForReduce", x = clusMembershipList[clusAssignment == coreNumber], init = initMatForReduce)
+    }
+    adjMatsByCore <- parallel::parLapply(X = 1:control$numThreads, cl = cl, fun = getAdjMatSumByCore)
+    summaryMat <- Reduce(f = "+", x = adjMatsByCore)/length(clusMembershipList)
+    rm(adjMatsByCore)
     parallel::stopCluster(cl)
   } else {
-    adjMats <- lapply(clusMembershipList, .getCoclusterMat)
+    summaryMat <- Reduce(f = funForReduce, x = clusMembershipList, init = initMatForReduce)/length(clusMembershipList)
   }
   # clusMembershipCategs <- unique(clusMembershipList)
   #
@@ -561,7 +571,7 @@ produceClusters <- function(clusMembershipList, control) {
   MAPclusters <- clusMembershipList[[names(frequencies)[[which.max(frequencies)]]]]
 
   cat("The MAP configuration was produced in", max(frequencies), "trees out of", length(clusMembershipList), ". \n")
-  summaryMat <- Reduce("+", adjMats)/length(adjMats)
+
   reorderedSummaryMatAndHclustObj <- reorder_cormat(summaryMat, method = control$hclustMethod) # Involves a temporary switch to a dense matrix. Should work if number of sequences to cluster is under 5,000.
 
   hierCluster <- cutree(reorderedSummaryMatAndHclustObj$hclustObject, h = 1 - control$linkageRequirement)
