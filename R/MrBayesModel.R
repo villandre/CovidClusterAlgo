@@ -238,20 +238,20 @@ gen.priors.control <- function() {
         tipTimes = tipTimes,
         edgeMatrix = phyloAndTransTree$edge,
         childrenNumList = phyloAndTransTree$childrenNumList)
-      newTree <- phyloAndTransTree
-      for (i in seq_along(newTree$node.label)) {
-        newTree$node.label[[i]]$time <- nodeTimesAndEdgeLengths$vertexTimes[[i]]
-      }
-      for (i in seq_along(newTree$edge.length)) {
-        newTree$edge.length[[i]]$transmissionTree <- nodeTimesAndEdgeLengths$edgeLengths[[i]]
-      }
-      newTree$distTipsAncestorsMatrix <- produceDistTipsAncestorsMatrixRcpp(
+      # newTree <- phyloAndTransTree
+      # for (i in seq_along(newTree$node.label)) {
+      #   newTree$node.label[[i]]$time <- nodeTimesAndEdgeLengths$vertexTimes[[i]]
+      # }
+      # for (i in seq_along(newTree$edge.length)) {
+      #   newTree$edge.length[[i]]$transmissionTree <- nodeTimesAndEdgeLengths$edgeLengths[[i]]
+      # }
+      distTipsAncestorsMatrix <- produceDistTipsAncestorsMatrixRcpp(
         numTips = length(phyloAndTransTree$tip.label),
         numNodes = length(phyloAndTransTree$node.label),
         branchMatchIndexVec = phyloAndTransTree$branchMatchIndex - 1,
         edgeLengthsVec = nodeTimesAndEdgeLengths$edgeLengths,
         parentNumVec = phyloAndTransTree$parentNumVec - 1) # The -1 is there because this is a C++ function, and indexing starts at 0 instead of 1.
-      subtreeClusterFun <- function(phyloAndTransTree, subtreeIndex, distLimit, clusterRegion, clusteringCriterion) {
+      subtreeClusterFun <- function(phyloAndTransTree, subtreeIndex, distLimit, clusterRegion, clusteringCriterion, distTipsAncestorsMatrix) {
         numTips <- length(phyloAndTransTree$tip.label)
         tipsInSubtreeAndRegion <- phyloAndTransTree$tipsInRegionBySubtree[[subtreeIndex]]
         seqNames <- sapply(tipsInSubtreeAndRegion, function(tipNum) phyloAndTransTree$tip.label[[tipNum]]$name)
@@ -271,7 +271,7 @@ gen.priors.control <- function() {
             vertexRegionVec = phyloAndTransTree$vertexRegionVec,
             tipNamesVec = phyloAndTransTree$tipNamesVec,
             subtreeRootNum = phyloAndTransTree$LambdaList[[subtreeIndex]]$rootNodeNum,
-            distTipsAncestorsMatrix = phyloAndTransTree$distTipsAncestorsMatrix,
+            distTipsAncestorsMatrix = distTipsAncestorsMatrix,
             subtreeIndex = subtreeIndex,
             numTips = numTips,
             regionLabel = clusterRegion,
@@ -283,7 +283,7 @@ gen.priors.control <- function() {
         }
         output
       }
-      clustersBySubtree <- sapply(seq_along(newTree$LambdaList), subtreeClusterFun, phyloAndTransTree = newTree, distLimit = control$distLimit, clusteringCriterion = control$clusteringCriterion, clusterRegion = control$clusterRegion)
+      clustersBySubtree <- sapply(seq_along(phyloAndTransTree$LambdaList), subtreeClusterFun, phyloAndTransTree = phyloAndTransTree, distLimit = control$distLimit, clusteringCriterion = control$clusteringCriterion, clusterRegion = control$clusterRegion, distTipsAncestorsMatrix = distTipsAncestorsMatrix)
       shiftValue <- 0
       for (i in 2:length(clustersBySubtree)) {
         if (length(clustersBySubtree[[i - 1]]) > 0) {
@@ -551,11 +551,16 @@ produceClusters <- function(clusMembershipList, control) {
   } else {
     adjMats <- lapply(clusMembershipList, .getCoclusterMat)
   }
-  clusMembershipCategs <- unique(clusMembershipList)
+  # clusMembershipCategs <- unique(clusMembershipList)
+  #
+  # combinFrequencies <- table(match(clusMembershipList, clusMembershipCategs))
+  # MAPclusters <- clusMembershipCategs[[as.numeric(names(combinFrequencies)[[which.max(combinFrequencies)]])]]
+  hashClusInd <- sapply(clusMembershipList, digest::digest)
+  names(clusMembershipList) <- hashClusInd
+  frequencies <- table(hashClusInd)
+  MAPclusters <- clusMembershipList[[names(frequencies)[[which.max(frequencies)]]]]
 
-  combinFrequencies <- table(match(clusMembershipList, clusMembershipCategs))
-  MAPclusters <- clusMembershipCategs[[as.numeric(names(combinFrequencies)[[which.max(combinFrequencies)]])]]
-  cat("The MAP configuration was produced in", max(combinFrequencies), "trees out of", length(clusMembershipList), ". \n")
+  cat("The MAP configuration was produced in", max(frequencies), "trees out of", length(clusMembershipList), ". \n")
   summaryMat <- Reduce("+", adjMats)/length(adjMats)
   reorderedSummaryMatAndHclustObj <- reorder_cormat(summaryMat, method = control$hclustMethod) # Involves a temporary switch to a dense matrix. Should work if number of sequences to cluster is under 5,000.
 
