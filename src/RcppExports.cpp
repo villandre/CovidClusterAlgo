@@ -22,7 +22,7 @@ BEGIN_RCPP
 END_RCPP
 }
 // getMRCAclustersRcpp
-Rcpp::List getMRCAclustersRcpp(IntegerVector& parentNumVec, List& childrenNumList, List& descendedTipsList, IntegerVector& subtreeIndexVec, CharacterVector& vertexRegionVec, CharacterVector& tipNamesVec, uint& subtreeRootNum, NumericMatrix& distTipsAncestorsMatrix, int subtreeIndex, int numTips, std::string regionLabel, int distLimit);
+std::unordered_map<std::string, uint> getMRCAclustersRcpp(IntegerVector& parentNumVec, List& childrenNumList, List& descendedTipsList, IntegerVector& subtreeIndexVec, StringVector& vertexRegionVec, StringVector& tipNamesVec, uint& subtreeRootNum, NumericMatrix& distTipsAncestorsMatrix, int subtreeIndex, int numTips, std::string regionLabel, int distLimit);
 RcppExport SEXP _CovidCluster_getMRCAclustersRcpp(SEXP parentNumVecSEXP, SEXP childrenNumListSEXP, SEXP descendedTipsListSEXP, SEXP subtreeIndexVecSEXP, SEXP vertexRegionVecSEXP, SEXP tipNamesVecSEXP, SEXP subtreeRootNumSEXP, SEXP distTipsAncestorsMatrixSEXP, SEXP subtreeIndexSEXP, SEXP numTipsSEXP, SEXP regionLabelSEXP, SEXP distLimitSEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
@@ -31,8 +31,8 @@ BEGIN_RCPP
     Rcpp::traits::input_parameter< List& >::type childrenNumList(childrenNumListSEXP);
     Rcpp::traits::input_parameter< List& >::type descendedTipsList(descendedTipsListSEXP);
     Rcpp::traits::input_parameter< IntegerVector& >::type subtreeIndexVec(subtreeIndexVecSEXP);
-    Rcpp::traits::input_parameter< CharacterVector& >::type vertexRegionVec(vertexRegionVecSEXP);
-    Rcpp::traits::input_parameter< CharacterVector& >::type tipNamesVec(tipNamesVecSEXP);
+    Rcpp::traits::input_parameter< StringVector& >::type vertexRegionVec(vertexRegionVecSEXP);
+    Rcpp::traits::input_parameter< StringVector& >::type tipNamesVec(tipNamesVecSEXP);
     Rcpp::traits::input_parameter< uint& >::type subtreeRootNum(subtreeRootNumSEXP);
     Rcpp::traits::input_parameter< NumericMatrix& >::type distTipsAncestorsMatrix(distTipsAncestorsMatrixSEXP);
     Rcpp::traits::input_parameter< int >::type subtreeIndex(subtreeIndexSEXP);

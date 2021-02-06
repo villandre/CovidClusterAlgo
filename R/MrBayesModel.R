@@ -263,7 +263,7 @@ gen.priors.control <- function() {
             clusterFunction <- getCopheneticClustersRcpp
           }
           # clusterList <- getMRCAclustersRcpp(
-          clusterList <- clusterFunction(
+          output <- clusterFunction(
             parentNumVec = phyloAndTransTree$parentNumVec,
             childrenNumList = phyloAndTransTree$childrenNumList,
             descendedTipsList = phyloAndTransTree$descendedTips,
@@ -276,10 +276,7 @@ gen.priors.control <- function() {
             numTips = numTips,
             regionLabel = clusterRegion,
             distLimit = distLimit)
-          output <- integer(0)
-          if (length(clusterList) > 0) {
-            output <- .convertClusterListToVecOfIndices(clusterList, seqNames)
-          }
+          output <- output[seqNames]
         }
         output
       }
@@ -485,11 +482,10 @@ computeLogSum <- function(logValues) {
   funForDescTips <- function(nodeNumber) {
     allDesc <- allDescList[[nodeNumber]]
     if (nodeNumber > length(phyloCopy$tip.label)) {
-      nodeRegion <- phyloCopy$node.label[[nodeNumber - numTips]]$region
       nodeSubtree <- phyloCopy$node.label[[nodeNumber - numTips]]$subtreeIndex
       tipRegions <- sapply(allDesc, function(tipNumber) phyloCopy$tip.label[[tipNumber]]$region)
       tipSubtrees <- sapply(allDesc, function(tipNumber) phyloCopy$tip.label[[tipNumber]]$subtreeIndex)
-      output <- allDesc[(tipSubtrees == nodeSubtree) & (tipRegions == nodeRegion)]
+      output <- allDesc[(tipSubtrees == nodeSubtree) & (tipRegions == clusterRegion)]
     } else {
       output <- nodeNumber
     }
