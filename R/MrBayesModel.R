@@ -168,22 +168,18 @@ gen.priors.control <- function() {
   timestampsInDays <- as.numeric(timestamps)/86400
 
   names(timestampsInDays) <- names(timestamps)
-  phyloAndTransTreeList <- cl <- NULL
-  if (covidCluster.control$numThreads > 1) {
-    cl <- parallel::makeForkCluster(covidCluster.control$numThreads)
-    phyloAndTransTreeList <- parallel::parLapply(X = phyloList, cl = cl, fun = function(listElement) tryCatch(expr = .genStartPhyloAndTransTree(phylogeny = listElement, timestampsInDays = timestampsInDays, regionStamps = regionStamps, logClockRatePriorMean = log(clockRate), estRootTime = rootTime, control = covidCluster.control), error = function(e) e))
-    phyloAndTransTreeList <- parallel::parLapply(X = phyloAndTransTreeList, cl = cl, fun = .incrementPhylo, clusterRegion = targetRegion)
-  } else {
-    phyloAndTransTreeList <- lapply(phyloList, function(listElement) tryCatch(expr = .genStartPhyloAndTransTree(phylogeny = listElement, timestampsInDays = timestampsInDays, regionStamps = regionStamps, logClockRatePriorMean = log(clockRate), estRootTime = rootTime, control = covidCluster.control), error = function(e) e))
-    phyloAndTransTreeList <- lapply(phyloAndTransTreeList, .incrementPhylo, clusterRegion = targetRegion)
-  }
+  cl <- clusMembershipCondOnPhylo <- NULL
 
-  clusMembershipCondOnPhylo <- NULL
   if (covidCluster.control$numThreads > 1) {
-    clusMembershipCondOnPhylo <- parallel::parLapply(cl = cl, X = phyloAndTransTreeList, fun = function(listElement) tryCatch(expr = .simulateClustersFromStartingTree(phyloAndTransTree = listElement, estRootTime = rootTime, control = covidCluster.control), error = function(e) e))
+    cat("Simulating transmission trees... ")
+    cl <- parallel::makeForkCluster(covidCluster.control$numThreads)
+    clusMembershipCondOnPhylo <- parallel::parLapply(cl = cl, X = phyloList, fun = function(listElement) tryCatch(expr = .simulateClustersFromStartingTree(phylogeny = listElement, estRootTime = rootTime, timestampsInDays = timestampsInDays, regionStamps = regionStamps, logClockRatePriorMean = log(clockRate), targetRegion = targetRegion, control = covidCluster.control), error = function(e) e))
+    cat("Done \n")
     parallel::stopCluster(cl)
   } else {
-  clusMembershipCondOnPhylo <- lapply(phyloAndTransTreeList, FUN = function(listElement) tryCatch(expr = .simulateClustersFromStartingTree(phyloAndTransTree = listElement, estRootTime = rootTime, control = covidCluster.control), error = function(e) e))
+    cat("Simulating transmission trees... ")
+  clusMembershipCondOnPhylo <- lapply(phyloList, FUN = function(listElement) tryCatch(expr = .simulateClustersFromStartingTree(phylogeny = listElement, estRootTime = rootTime, timestampsInDays = timestampsInDays, regionStamps = regionStamps, logClockRatePriorMean = log(clockRate), targetRegion = targetRegion, control = covidCluster.control), error = function(e) e))
+  cat("Done \n")
   }
   indicesToKeep <- sapply(clusMembershipCondOnPhylo, FUN = function(listElement) !("error" %in% class(listElement)))
   combinedVecs <- do.call("c", clusMembershipCondOnPhylo[indicesToKeep])
@@ -218,7 +214,8 @@ gen.priors.control <- function() {
 
 # subtreeClusterFun is a function that takes a phyloAndTransTree object and a region index and produces a vector of cluster membership indices.
 
-.simulateClustersFromStartingTree <- function(phyloAndTransTree,  estRootTime, control) {
+.simulateClustersFromStartingTree <- function(phylogeny,  estRootTime, timestampsInDays, regionStamps, logClockRatePriorMean, targetRegion, control) {
+  phyloAndTransTree <- .incrementPhylo(.genStartPhyloAndTransTree(phylogeny = phylogeny, timestampsInDays = timestampsInDays, regionStamps = regionStamps, logClockRatePriorMean = logClockRatePriorMean, estRootTime = estRootTime, control = control), clusterRegion = targetRegion)
   funToReplicate <- function(phyloAndTransTree, estRootTime, control) {
     medianRates <- sapply(phyloAndTransTree$LambdaList, "[[", "Lambda")
     # coalRates <- rnorm(n = length(phyloAndTransTree$LambdaList), mean = meanCoalRates, sd = meanCoalRates * control$lambdaPriorCV)
@@ -527,6 +524,7 @@ computeLogSum <- function(logValues) {
 }
 
 produceClusters <- function(clusMembershipList, control) {
+  cat("Summarising cluster configurations... \n")
   initMatForReduce <- Matrix::sparseMatrix(i = seq_along(clusMembershipList[[1]]), j = seq_along(clusMembershipList[[1]]), x = rep(0, length(clusMembershipList[[1]])), dims = rep(length(clusMembershipList[[1]]), 2), symmetric = TRUE)
   funForReduce <- function(adjMat, clusMemVec) {
     adjMat + .getCoclusterMat(clusMemVec)
@@ -535,10 +533,11 @@ produceClusters <- function(clusMembershipList, control) {
   if (control$numThreads > 1) {
     cl <- parallel::makeForkCluster(control$numThreads)
     clusAssignment <- rep_len(1:control$numThreads, length.out = length(clusMembershipList))
-    getAdjMatSumByCore <- function(coreNumber) {
-      Reduce(f = "funForReduce", x = clusMembershipList[clusAssignment == coreNumber], init = initMatForReduce)
+    getAdjMatSumByCore <- function(subClusMembershipList, initMat) {
+      Reduce(f = "funForReduce", x = subClusMembershipList, init = initMat)
     }
-    adjMatsByCore <- parallel::parLapply(X = 1:control$numThreads, cl = cl, fun = getAdjMatSumByCore)
+
+    adjMatsByCore <- parallel::parLapply(X = 1:control$numThreads, cl = cl, fun = function(threadNumber) getAdjMatSumByCore(subClusMembershipList = clusMembershipList[clusAssignment == threadNumber], initMat = initMatForReduce))
     summaryMat <- Reduce(f = "+", x = adjMatsByCore)/length(clusMembershipList)
     rm(adjMatsByCore)
     parallel::stopCluster(cl)
@@ -554,11 +553,12 @@ produceClusters <- function(clusMembershipList, control) {
   frequencies <- table(hashClusInd)
   MAPclusters <- clusMembershipList[[names(frequencies)[[which.max(frequencies)]]]]
 
-  cat("The MAP configuration was produced in", max(frequencies), "trees out of", length(clusMembershipList), ". \n")
+  cat("The MAP configuration was produced in", max(frequencies), "trees out of", length(clusMembershipList), "\n")
 
   reorderedSummaryMatAndHclustObj <- reorder_cormat(summaryMat, method = control$hclustMethod) # Involves a temporary switch to a dense matrix. Should work if number of sequences to cluster is under 5,000.
 
   hierCluster <- cutree(reorderedSummaryMatAndHclustObj$hclustObject, h = 1 - control$linkageRequirement)
+  cat("Done \n")
   list(
     hclustObject = reorderedSummaryMatAndHclustObj$hclustObject,
     MAPclusters = MAPclusters,
