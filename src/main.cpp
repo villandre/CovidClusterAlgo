@@ -17,11 +17,10 @@ using namespace Rcpp;
 //   http://gallery.rcpp.org/
 //
 
-// [[Rcpp::export]]
 arma::mat produceDistTipsAncestorsMatrixRcpp(uint numTips,
                                        uint numNodes,
                                        IntegerVector branchMatchIndexVec,
-                                       NumericVector edgeLengthsVec,
+                                       std::vector<double> edgeLengthsVec,
                                        IntegerVector parentNumVec) {
   uint branchMatchIndex = 0 ;
   arma::mat containerMatrix(numTips, numNodes, arma::fill::zeros) ;
@@ -31,9 +30,9 @@ arma::mat produceDistTipsAncestorsMatrixRcpp(uint numTips,
     uint currentPos = tipNum ;
     double totalDist = 0 ;
     do {
-      parentNum = parentNumVec.at(currentPos) ;
-      branchMatchIndex = branchMatchIndexVec.at(currentPos) ;
-      totalDist = totalDist + edgeLengthsVec.at(branchMatchIndex) ;
+      parentNum = parentNumVec.at(currentPos) - 1;
+      branchMatchIndex = branchMatchIndexVec.at(currentPos) - 1 ;
+      totalDist = totalDist + edgeLengthsVec[branchMatchIndex] ;
       containerMatrix.at(tipNum, parentNum - numTips) = totalDist ;
       currentPos = parentNum ;
     } while (currentPos > numTips) ; // numTips is the root index, rather than numTips + 1
@@ -357,7 +356,9 @@ List simulateNodeTimesRcpp(
     IntegerVector & subtreeIndexVec,
     NumericVector & tipTimes,
     IntegerMatrix & edgeMatrix,
-    List & childrenNumList) {
+    List & childrenNumList,
+    IntegerVector branchMatchIndexVec,
+    IntegerVector parentNumVec) {
   std::vector<double> vertexTimes(subtreeIndexVec.size()) ;
   for (uint i = 0; i < tipTimes.size(); i++) {
     vertexTimes[i] = tipTimes(i) ;
@@ -388,7 +389,13 @@ List simulateNodeTimesRcpp(
     nodeTimes.push_back(vertexTimes[i]) ;
   }
 
-  return List::create(Named("vertexTimes") = Rcpp::wrap(nodeTimes), Named("edgeLengths") = Rcpp::wrap(edgeLengths)) ;
+  arma::mat distTipsAncestors = produceDistTipsAncestorsMatrixRcpp(numTips,
+                                     subtreeIndexVec.size() - numTips,
+                                     branchMatchIndexVec,
+                                     edgeLengths,
+                                     parentNumVec) ;
+
+  return List::create(Named("vertexTimes") = Rcpp::wrap(nodeTimes), Named("edgeLengths") = Rcpp::wrap(edgeLengths), Named("distTipsAncestorsMatrix") = distTipsAncestors) ;
 }
 
 

@@ -188,7 +188,7 @@ gen.priors.control <- function() {
   indicesToKeep <- sapply(clusMembershipCondOnPhylo, FUN = function(listElement) !("error" %in% class(listElement)))
   combinedVecs <- do.call("c", clusMembershipCondOnPhylo[indicesToKeep])
   seqsInOrderNames <- names(combinedVecs[[1]])
-  lapply(combinedVecs, function(clusMemVec) .standardiseClusterIndices(clusMemVec[seqsInOrderNames]))
+  lapply(combinedVecs, function(clusMemVec) as.numeric(factor(clusMemVec[seqsInOrderNames])))
 }
 
 .writeMrBayesFiles <- function(DNAbinData, nexusFilename, folderForMrBayesFiles, outgroup, control) {
@@ -237,20 +237,9 @@ gen.priors.control <- function() {
         subtreeIndexVec = phyloAndTransTree$subtreeIndexVec,
         tipTimes = tipTimes,
         edgeMatrix = phyloAndTransTree$edge,
-        childrenNumList = phyloAndTransTree$childrenNumList)
-      # newTree <- phyloAndTransTree
-      # for (i in seq_along(newTree$node.label)) {
-      #   newTree$node.label[[i]]$time <- nodeTimesAndEdgeLengths$vertexTimes[[i]]
-      # }
-      # for (i in seq_along(newTree$edge.length)) {
-      #   newTree$edge.length[[i]]$transmissionTree <- nodeTimesAndEdgeLengths$edgeLengths[[i]]
-      # }
-      distTipsAncestorsMatrix <- produceDistTipsAncestorsMatrixRcpp(
-        numTips = length(phyloAndTransTree$tip.label),
-        numNodes = length(phyloAndTransTree$node.label),
-        branchMatchIndexVec = phyloAndTransTree$branchMatchIndex - 1,
-        edgeLengthsVec = nodeTimesAndEdgeLengths$edgeLengths,
-        parentNumVec = phyloAndTransTree$parentNumVec - 1) # The -1 is there because this is a C++ function, and indexing starts at 0 instead of 1.
+        childrenNumList = phyloAndTransTree$childrenNumList,
+        branchMatchIndexVec = phyloAndTransTree$branchMatchIndex,
+        parentNumVec = phyloAndTransTree$parentNumVec)
       subtreeClusterFun <- function(phyloAndTransTree, subtreeIndex, distLimit, clusterRegion, clusteringCriterion, distTipsAncestorsMatrix) {
         numTips <- length(phyloAndTransTree$tip.label)
         tipsInSubtreeAndRegion <- phyloAndTransTree$tipsInRegionBySubtree[[subtreeIndex]]
@@ -262,7 +251,6 @@ gen.priors.control <- function() {
           if (control$clusterCriterion == "cophenetic") {
             clusterFunction <- getCopheneticClustersRcpp
           }
-          # clusterList <- getMRCAclustersRcpp(
           output <- clusterFunction(
             parentNumVec = phyloAndTransTree$parentNumVec,
             childrenNumList = phyloAndTransTree$childrenNumList,
@@ -271,7 +259,7 @@ gen.priors.control <- function() {
             vertexRegionVec = phyloAndTransTree$vertexRegionVec,
             tipNamesVec = phyloAndTransTree$tipNamesVec,
             subtreeRootNum = phyloAndTransTree$LambdaList[[subtreeIndex]]$rootNodeNum,
-            distTipsAncestorsMatrix = distTipsAncestorsMatrix,
+            distTipsAncestorsMatrix = nodeTimesAndEdgeLengths$distTipsAncestorsMatrix,
             subtreeIndex = subtreeIndex,
             numTips = numTips,
             regionLabel = clusterRegion,
@@ -280,7 +268,7 @@ gen.priors.control <- function() {
         }
         output
       }
-      clustersBySubtree <- sapply(seq_along(phyloAndTransTree$LambdaList), subtreeClusterFun, phyloAndTransTree = phyloAndTransTree, distLimit = control$distLimit, clusteringCriterion = control$clusteringCriterion, clusterRegion = control$clusterRegion, distTipsAncestorsMatrix = distTipsAncestorsMatrix)
+      clustersBySubtree <- sapply(seq_along(phyloAndTransTree$LambdaList), subtreeClusterFun, phyloAndTransTree = phyloAndTransTree, distLimit = control$distLimit, clusteringCriterion = control$clusteringCriterion, clusterRegion = control$clusterRegion, distTipsAncestorsMatrix = nodeTimesAndEdgeLengths$distTipsAncestorsMatrix)
       shiftValue <- 0
       for (i in 2:length(clustersBySubtree)) {
         if (length(clustersBySubtree[[i - 1]]) > 0) {
@@ -572,7 +560,7 @@ produceClusters <- function(clusMembershipList, control) {
 
   hierCluster <- cutree(reorderedSummaryMatAndHclustObj$hclustObject, h = 1 - control$linkageRequirement)
   list(
-    adjMatrix = reorderedSummaryMatAndHclustObj$sparseMatrix,
+    hclustObject = reorderedSummaryMatAndHclustObj$hclustObject,
     MAPclusters = MAPclusters,
     hierarchicalClusters = hierCluster)
 }

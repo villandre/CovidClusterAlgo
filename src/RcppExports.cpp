@@ -6,21 +6,6 @@
 
 using namespace Rcpp;
 
-// produceDistTipsAncestorsMatrixRcpp
-arma::mat produceDistTipsAncestorsMatrixRcpp(uint numTips, uint numNodes, IntegerVector branchMatchIndexVec, NumericVector edgeLengthsVec, IntegerVector parentNumVec);
-RcppExport SEXP _CovidCluster_produceDistTipsAncestorsMatrixRcpp(SEXP numTipsSEXP, SEXP numNodesSEXP, SEXP branchMatchIndexVecSEXP, SEXP edgeLengthsVecSEXP, SEXP parentNumVecSEXP) {
-BEGIN_RCPP
-    Rcpp::RObject rcpp_result_gen;
-    Rcpp::RNGScope rcpp_rngScope_gen;
-    Rcpp::traits::input_parameter< uint >::type numTips(numTipsSEXP);
-    Rcpp::traits::input_parameter< uint >::type numNodes(numNodesSEXP);
-    Rcpp::traits::input_parameter< IntegerVector >::type branchMatchIndexVec(branchMatchIndexVecSEXP);
-    Rcpp::traits::input_parameter< NumericVector >::type edgeLengthsVec(edgeLengthsVecSEXP);
-    Rcpp::traits::input_parameter< IntegerVector >::type parentNumVec(parentNumVecSEXP);
-    rcpp_result_gen = Rcpp::wrap(produceDistTipsAncestorsMatrixRcpp(numTips, numNodes, branchMatchIndexVec, edgeLengthsVec, parentNumVec));
-    return rcpp_result_gen;
-END_RCPP
-}
 // getMRCAclustersRcpp
 std::unordered_map<std::string, uint> getMRCAclustersRcpp(IntegerVector& parentNumVec, List& childrenNumList, List& descendedTipsList, IntegerVector& subtreeIndexVec, StringVector& vertexRegionVec, StringVector& tipNamesVec, uint& subtreeRootNum, NumericMatrix& distTipsAncestorsMatrix, int subtreeIndex, int numTips, std::string regionLabel, int distLimit);
 RcppExport SEXP _CovidCluster_getMRCAclustersRcpp(SEXP parentNumVecSEXP, SEXP childrenNumListSEXP, SEXP descendedTipsListSEXP, SEXP subtreeIndexVecSEXP, SEXP vertexRegionVecSEXP, SEXP tipNamesVecSEXP, SEXP subtreeRootNumSEXP, SEXP distTipsAncestorsMatrixSEXP, SEXP subtreeIndexSEXP, SEXP numTipsSEXP, SEXP regionLabelSEXP, SEXP distLimitSEXP) {
@@ -44,8 +29,8 @@ BEGIN_RCPP
 END_RCPP
 }
 // simulateNodeTimesRcpp
-List simulateNodeTimesRcpp(uint numTips, NumericVector& baseRatePerIntroduction, IntegerVector& orderedVertices, IntegerVector& subtreeIndexVec, NumericVector& tipTimes, IntegerMatrix& edgeMatrix, List& childrenNumList);
-RcppExport SEXP _CovidCluster_simulateNodeTimesRcpp(SEXP numTipsSEXP, SEXP baseRatePerIntroductionSEXP, SEXP orderedVerticesSEXP, SEXP subtreeIndexVecSEXP, SEXP tipTimesSEXP, SEXP edgeMatrixSEXP, SEXP childrenNumListSEXP) {
+List simulateNodeTimesRcpp(uint numTips, NumericVector& baseRatePerIntroduction, IntegerVector& orderedVertices, IntegerVector& subtreeIndexVec, NumericVector& tipTimes, IntegerMatrix& edgeMatrix, List& childrenNumList, IntegerVector branchMatchIndexVec, IntegerVector parentNumVec);
+RcppExport SEXP _CovidCluster_simulateNodeTimesRcpp(SEXP numTipsSEXP, SEXP baseRatePerIntroductionSEXP, SEXP orderedVerticesSEXP, SEXP subtreeIndexVecSEXP, SEXP tipTimesSEXP, SEXP edgeMatrixSEXP, SEXP childrenNumListSEXP, SEXP branchMatchIndexVecSEXP, SEXP parentNumVecSEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
@@ -56,15 +41,16 @@ BEGIN_RCPP
     Rcpp::traits::input_parameter< NumericVector& >::type tipTimes(tipTimesSEXP);
     Rcpp::traits::input_parameter< IntegerMatrix& >::type edgeMatrix(edgeMatrixSEXP);
     Rcpp::traits::input_parameter< List& >::type childrenNumList(childrenNumListSEXP);
-    rcpp_result_gen = Rcpp::wrap(simulateNodeTimesRcpp(numTips, baseRatePerIntroduction, orderedVertices, subtreeIndexVec, tipTimes, edgeMatrix, childrenNumList));
+    Rcpp::traits::input_parameter< IntegerVector >::type branchMatchIndexVec(branchMatchIndexVecSEXP);
+    Rcpp::traits::input_parameter< IntegerVector >::type parentNumVec(parentNumVecSEXP);
+    rcpp_result_gen = Rcpp::wrap(simulateNodeTimesRcpp(numTips, baseRatePerIntroduction, orderedVertices, subtreeIndexVec, tipTimes, edgeMatrix, childrenNumList, branchMatchIndexVec, parentNumVec));
     return rcpp_result_gen;
 END_RCPP
 }
 
 static const R_CallMethodDef CallEntries[] = {
-    {"_CovidCluster_produceDistTipsAncestorsMatrixRcpp", (DL_FUNC) &_CovidCluster_produceDistTipsAncestorsMatrixRcpp, 5},
     {"_CovidCluster_getMRCAclustersRcpp", (DL_FUNC) &_CovidCluster_getMRCAclustersRcpp, 12},
-    {"_CovidCluster_simulateNodeTimesRcpp", (DL_FUNC) &_CovidCluster_simulateNodeTimesRcpp, 7},
+    {"_CovidCluster_simulateNodeTimesRcpp", (DL_FUNC) &_CovidCluster_simulateNodeTimesRcpp, 9},
     {NULL, NULL, 0}
 };
 

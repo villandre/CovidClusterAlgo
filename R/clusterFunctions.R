@@ -916,18 +916,3 @@ getPhyloEdgeLengths <- function(phyloAndTransTree) {
 getNodeTimes <- function(phyloAndTransTree) {
   sapply(phyloAndTransTree$node.label, "[[", "time")
 }
-
-.standardiseClusterIndices <- function(clusInd) {
-  if (length(clusInd) == 0) return(clusInd)
-  newClusInd <- clusInd
-  numIndices <- length(unique(clusInd))
-  assignedIndices <- rep(FALSE, length(clusInd))
-  for (i in 1:numIndices) {
-    position <- match(FALSE, assignedIndices)
-    valueAtPos <- clusInd[[position]]
-    posToChange <- clusInd == valueAtPos
-    assignedIndices[posToChange] <- TRUE
-    newClusInd[posToChange] <- i
-  }
-  newClusInd
-}
