@@ -358,42 +358,23 @@ List simulateNodeTimesRcpp(
     NumericVector & tipTimes,
     IntegerMatrix & edgeMatrix,
     List & childrenNumList) {
-  std::vector<std::vector<uint>> childrenNumListTypecast ;
   std::vector<double> vertexTimes(subtreeIndexVec.size()) ;
   for (uint i = 0; i < tipTimes.size(); i++) {
     vertexTimes[i] = tipTimes(i) ;
   }
 
-  for (uint i = 0; i < childrenNumList.size(); i++) {
-    if (Rf_isNull(childrenNumList[i])) {
-      std::vector<uint> placeholder ; // A 0-length vector, since tips don't have children.
-      childrenNumListTypecast.push_back(placeholder) ;
-    } else {
-      std::vector<uint> vectorToInclude = Rcpp::as<std::vector<uint>>(Rcpp::as<IntegerVector>(childrenNumList[i])) ;
-      std::transform(vectorToInclude.begin(), vectorToInclude.end(), vectorToInclude.begin(),
-                     [] (uint & i) { return i - 1 ;}) ;
-      childrenNumListTypecast.push_back(vectorToInclude) ;
-    }
-  }
-  std::vector<uint> orderedNodes ;
-  for (auto & vertexNum : orderedVertices) {
-    if (vertexNum > numTips) { // R indexing, so >, not >=.
-      orderedNodes.push_back(vertexNum - 1) ; // Bringing it back to C++ indexing.
-    }
-  }
-
-  for (auto & nodeNum : orderedNodes) {
-    std::vector<uint> childrenNums = childrenNumListTypecast[nodeNum] ;
-    uint subtreeForMerge = subtreeIndexVec(nodeNum) ; // -1 will have to be applied for indexing
-    arma::vec childrenTimes(childrenNums.size()) ;
+  for (auto & nodeNum : orderedVertices) {
+    if (nodeNum <= numTips) continue ;
+    uint subtreeForMerge = subtreeIndexVec(nodeNum - 1) ; // -1 will have to be applied for indexing
+    arma::vec childrenTimes(Rcpp::as<NumericVector>(childrenNumList[nodeNum - 1]).size()) ;
     for (uint j = 0; j < childrenTimes.size(); j++) {
-      childrenTimes.at(j) = vertexTimes[childrenNums.at(j)];
+      childrenTimes.at(j) = vertexTimes[Rcpp::as<NumericVector>(childrenNumList[nodeNum - 1])[j] - 1];
     }
 
     arma::vec minChildrenTimes(1) ; // The odd setup here is due to arma::randg returning a vector.
     minChildrenTimes(0) = min(childrenTimes) ;
     arma::vec vecWithTimeValue = minChildrenTimes - arma::randg(1, arma::distr_param(double(1), baseRatePerIntroduction(subtreeForMerge - 1))) ;
-    vertexTimes[nodeNum] = vecWithTimeValue(0) ;
+    vertexTimes[nodeNum - 1] = vecWithTimeValue(0) ;
   }
 
   std::vector<double> edgeLengths(subtreeIndexVec.size() - 1) ;
