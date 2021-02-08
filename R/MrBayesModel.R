@@ -532,12 +532,11 @@ produceClusters <- function(clusMembershipList, control) {
   summaryMat <- NULL
   if (control$numThreads > 1) {
     cl <- parallel::makeForkCluster(control$numThreads)
-    clusAssignment <- rep_len(1:control$numThreads, length.out = length(clusMembershipList))
     getAdjMatSumByCore <- function(subClusMembershipList, initMat) {
       Reduce(f = "funForReduce", x = subClusMembershipList, init = initMat)
     }
-
-    adjMatsByCore <- parallel::parLapply(X = 1:control$numThreads, cl = cl, fun = function(threadNumber) getAdjMatSumByCore(subClusMembershipList = clusMembershipList[clusAssignment == threadNumber], initMat = initMatForReduce))
+    clusAssignment <- rep_len(1:control$numThreads, length.out = length(clusMembershipList))
+    adjMatsByCore <- parallel::parLapply(X = split(clusMembershipList, f = clusAssignment), cl = cl, fun = function(subClusMembershipList) getAdjMatSumByCore(subClusMembershipList = subClusMembershipList, initMat = initMatForReduce))
     summaryMat <- Reduce(f = "+", x = adjMatsByCore)/length(clusMembershipList)
     rm(adjMatsByCore)
     parallel::stopCluster(cl)
