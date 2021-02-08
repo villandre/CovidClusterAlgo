@@ -261,7 +261,8 @@ gen.priors.control <- function() {
             numTips = numTips,
             regionLabel = clusterRegion,
             distLimit = distLimit)
-          output <- output[seqNames]
+          output <- as.integer(output[seqNames])
+          names(output) <- seqNames # as.integer removes the names
         }
         output
       }
