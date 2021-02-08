@@ -525,28 +525,7 @@ computeLogSum <- function(logValues) {
 
 produceClusters <- function(clusMembershipList, control) {
   cat("Summarising cluster configurations... \n")
-  initMatForReduce <- Matrix::sparseMatrix(i = seq_along(clusMembershipList[[1]]), j = seq_along(clusMembershipList[[1]]), x = rep(0, length(clusMembershipList[[1]])), dims = rep(length(clusMembershipList[[1]]), 2), symmetric = TRUE)
-  funForReduce <- function(adjMat, clusMemVec) {
-    adjMat + .getCoclusterMat(clusMemVec)
-  }
-  summaryMat <- NULL
-  if (control$numThreads > 1) {
-    cl <- parallel::makeForkCluster(control$numThreads)
-    getAdjMatSumByCore <- function(subClusMembershipList, initMat) {
-      Reduce(f = "funForReduce", x = subClusMembershipList, init = initMat)
-    }
-    clusAssignment <- rep_len(1:control$numThreads, length.out = length(clusMembershipList))
-    adjMatsByCore <- parallel::parLapply(X = split(clusMembershipList, f = clusAssignment), cl = cl, fun = function(subClusMembershipList) getAdjMatSumByCore(subClusMembershipList = subClusMembershipList, initMat = initMatForReduce))
-    summaryMat <- Reduce(f = "+", x = adjMatsByCore)/length(clusMembershipList)
-    rm(adjMatsByCore)
-    parallel::stopCluster(cl)
-  } else {
-    summaryMat <- Reduce(f = funForReduce, x = clusMembershipList, init = initMatForReduce)/length(clusMembershipList)
-  }
-  # clusMembershipCategs <- unique(clusMembershipList)
-  #
-  # combinFrequencies <- table(match(clusMembershipList, clusMembershipCategs))
-  # MAPclusters <- clusMembershipCategs[[as.numeric(names(combinFrequencies)[[which.max(combinFrequencies)]])]]
+  summaryMat <- getSummaryMatRcpp(clusMembershipList)
   hashClusInd <- sapply(clusMembershipList, digest::digest)
   names(clusMembershipList) <- hashClusInd
   frequencies <- table(hashClusInd)

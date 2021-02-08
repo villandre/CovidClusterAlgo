@@ -3,6 +3,7 @@
 
 #include <stdio.h>
 #include <RcppArmadillo.h>
+
 // #include <gperftools/profiler.h>
 
 using namespace Rcpp;
@@ -398,4 +399,37 @@ List simulateNodeTimesRcpp(
   return List::create(Named("vertexTimes") = Rcpp::wrap(nodeTimes), Named("edgeLengths") = Rcpp::wrap(edgeLengths), Named("distTipsAncestorsMatrix") = distTipsAncestors) ;
 }
 
+arma::sp_mat getCoclusterMat(IntegerVector clusMemVec) {
+  arma::uvec uniqueValues = arma::unique(Rcpp::as<arma::uvec>(clusMemVec)) ;
+  arma::umat locations = arma::umat(2, clusMemVec.size()) ;
+  for (uint colIndex = 0; colIndex < locations.n_cols; colIndex++) {
+    locations(0, colIndex) = locations(1, colIndex) = colIndex ;
+  }
+  arma::uvec indices ;
+  for (auto & clusNum : uniqueValues) {
+    indices = arma::find(Rcpp::as<arma::uvec>(clusMemVec) == clusNum) ;
+    int numCols = int(indices.size() * (indices.size() - 1) / 2) ;
+    arma::umat matToMerge(2, numCols) ;
+    uint matToMergeCol = 0 ;
+    for (uint i = 0; i < indices.size() - 1; i++) {
+      for (uint j = i + 1; j < indices.size(); j++) {
+        matToMerge(0, matToMergeCol) = indices(i) ;
+        matToMerge(1, matToMergeCol) = indices(j) ;
+        matToMergeCol++ ;
+      }
+    }
+    locations = arma::join_rows(locations, matToMerge) ;
+  }
+  return arma::sp_mat(locations, arma::vec(locations.n_cols, arma::fill::ones)) ;
+}
+
+// [[Rcpp::export]]
+
+arma::sp_mat getSummaryMatRcpp(List clusMemVecList) {
+  arma::sp_mat resultMatrix = getCoclusterMat(Rcpp::as<IntegerVector>(clusMemVecList.at(0))) ;
+  for (uint i = 1; i < clusMemVecList.size(); i++) {
+    resultMatrix += getCoclusterMat(Rcpp::as<IntegerVector>(clusMemVecList.at(i))) ;
+  }
+  return resultMatrix / clusMemVecList.size() ;
+}
 

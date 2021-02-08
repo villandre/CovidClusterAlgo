@@ -47,10 +47,22 @@ BEGIN_RCPP
     return rcpp_result_gen;
 END_RCPP
 }
+// getSummaryMatRcpp
+arma::sp_mat getSummaryMatRcpp(List clusMemVecList);
+RcppExport SEXP _CovidCluster_getSummaryMatRcpp(SEXP clusMemVecListSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< List >::type clusMemVecList(clusMemVecListSEXP);
+    rcpp_result_gen = Rcpp::wrap(getSummaryMatRcpp(clusMemVecList));
+    return rcpp_result_gen;
+END_RCPP
+}
 
 static const R_CallMethodDef CallEntries[] = {
     {"_CovidCluster_getMRCAclustersRcpp", (DL_FUNC) &_CovidCluster_getMRCAclustersRcpp, 12},
     {"_CovidCluster_simulateNodeTimesRcpp", (DL_FUNC) &_CovidCluster_simulateNodeTimesRcpp, 9},
+    {"_CovidCluster_getSummaryMatRcpp", (DL_FUNC) &_CovidCluster_getSummaryMatRcpp, 1},
     {NULL, NULL, 0}
 };
 

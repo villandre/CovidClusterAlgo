@@ -9,3 +9,7 @@ simulateNodeTimesRcpp <- function(numTips, baseRatePerIntroduction, orderedVerti
     .Call('_CovidCluster_simulateNodeTimesRcpp', PACKAGE = 'CovidCluster', numTips, baseRatePerIntroduction, orderedVertices, subtreeIndexVec, tipTimes, edgeMatrix, childrenNumList, branchMatchIndexVec, parentNumVec)
 }
 
+getSummaryMatRcpp <- function(clusMemVecList) {
+    .Call('_CovidCluster_getSummaryMatRcpp', PACKAGE = 'CovidCluster', clusMemVecList)
+}
+
