@@ -403,7 +403,7 @@ arma::sp_umat getCoclusterMat(IntegerVector clusMemVec) {
   arma::uvec uniqueValues = arma::unique(Rcpp::as<arma::uvec>(clusMemVec)) ;
   arma::umat locations = arma::umat(2, clusMemVec.size()) ;
   for (uint colIndex = 0; colIndex < locations.n_cols; colIndex++) {
-    locations(0, colIndex) = locations(1, colIndex) = colIndex ;
+    locations.at(0, colIndex) = locations.at(1, colIndex) = colIndex ;
   }
   arma::uvec indices ;
   for (auto & clusNum : uniqueValues) {
@@ -413,8 +413,8 @@ arma::sp_umat getCoclusterMat(IntegerVector clusMemVec) {
     uint matToMergeCol = 0 ;
     for (uint i = 0; i < indices.size() - 1; i++) {
       for (uint j = i + 1; j < indices.size(); j++) {
-        matToMerge(0, matToMergeCol) = indices(j) ;
-        matToMerge(1, matToMergeCol) = indices(i) ; // We want a lower-triangular matrix, hence j then i.
+        matToMerge.at(0, matToMergeCol) = indices.at(j) ;
+        matToMerge.at(1, matToMergeCol) = indices.at(i) ; // We want a lower-triangular matrix, hence j then i.
         matToMergeCol++ ;
       }
     }
