@@ -184,7 +184,7 @@ gen.priors.control <- function() {
   indicesToKeep <- sapply(clusMembershipCondOnPhylo, FUN = function(listElement) !("error" %in% class(listElement)))
   combinedVecs <- do.call("c", clusMembershipCondOnPhylo[indicesToKeep])
   seqsInOrderNames <- names(combinedVecs[[1]])
-  lapply(combinedVecs, function(clusMemVec) as.numeric(factor(clusMemVec[seqsInOrderNames])))
+  list(clusMemVecList = lapply(combinedVecs, function(clusMemVec) as.integer(factor(clusMemVec[seqsInOrderNames]))), seqNames = seqsInOrderNames) # Call to factor removes sequence names... For memory reasons, better to keep names separate.
 }
 
 .writeMrBayesFiles <- function(DNAbinData, nexusFilename, folderForMrBayesFiles, outgroup, control) {
@@ -214,7 +214,7 @@ gen.priors.control <- function() {
 
 # subtreeClusterFun is a function that takes a phyloAndTransTree object and a region index and produces a vector of cluster membership indices.
 
-.simulateClustersFromStartingTree <- function(phylogeny,  estRootTime, timestampsInDays, regionStamps, logClockRatePriorMean, targetRegion, control) {
+.simulateClustersFromStartingTree <- function(phylogeny, estRootTime, timestampsInDays, regionStamps, logClockRatePriorMean, targetRegion, control) {
   phyloAndTransTree <- .incrementPhylo(.genStartPhyloAndTransTree(phylogeny = phylogeny, timestampsInDays = timestampsInDays, regionStamps = regionStamps, logClockRatePriorMean = logClockRatePriorMean, estRootTime = estRootTime, control = control), clusterRegion = targetRegion)
   funToReplicate <- function(phyloAndTransTree, estRootTime, control) {
     medianRates <- sapply(phyloAndTransTree$LambdaList, "[[", "Lambda")
@@ -525,14 +525,14 @@ computeLogSum <- function(logValues) {
 
 produceClusters <- function(clusMembershipList, control) {
   cat("Summarising cluster configurations... \n")
-  summaryMat <- getSummaryMatRcpp(clusMembershipList)
-  hashClusInd <- sapply(clusMembershipList, digest::digest)
-  names(clusMembershipList) <- hashClusInd
+  summaryMat <- getSumMatRcpp(clusMembershipList$clusMemVecList)/length(clusMembershipList$clusMemVecList)
+  hashClusInd <- sapply(clusMembershipList$clusMemVecList, digest::digest)
+  names(clusMembershipList$clusMemVecList) <- hashClusInd
   frequencies <- table(hashClusInd)
-  MAPclusters <- clusMembershipList[[names(frequencies)[[which.max(frequencies)]]]]
-
-  cat("The MAP configuration was produced in", max(frequencies), "trees out of", length(clusMembershipList), "\n")
-
+  MAPclusters <- clusMembershipList$clusMemVecList[[names(frequencies)[[which.max(frequencies)]]]]
+  names(MAPclusters) <- clusMembershipList$seqNames
+  cat("The MAP configuration was produced in", max(frequencies), "trees out of", length(clusMembershipList$clusMemVecList), "\n")
+  rownames(summaryMat) <- colnames(summaryMat) <- clusMembershipList$seqNames
   reorderedSummaryMatAndHclustObj <- reorder_cormat(summaryMat, method = control$hclustMethod) # Involves a temporary switch to a dense matrix. Should work if number of sequences to cluster is under 5,000.
 
   hierCluster <- cutree(reorderedSummaryMatAndHclustObj$hclustObject, h = 1 - control$linkageRequirement)

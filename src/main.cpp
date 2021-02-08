@@ -399,7 +399,7 @@ List simulateNodeTimesRcpp(
   return List::create(Named("vertexTimes") = Rcpp::wrap(nodeTimes), Named("edgeLengths") = Rcpp::wrap(edgeLengths), Named("distTipsAncestorsMatrix") = distTipsAncestors) ;
 }
 
-arma::sp_mat getCoclusterMat(IntegerVector clusMemVec) {
+arma::sp_umat getCoclusterMat(IntegerVector clusMemVec) {
   arma::uvec uniqueValues = arma::unique(Rcpp::as<arma::uvec>(clusMemVec)) ;
   arma::umat locations = arma::umat(2, clusMemVec.size()) ;
   for (uint colIndex = 0; colIndex < locations.n_cols; colIndex++) {
@@ -413,23 +413,23 @@ arma::sp_mat getCoclusterMat(IntegerVector clusMemVec) {
     uint matToMergeCol = 0 ;
     for (uint i = 0; i < indices.size() - 1; i++) {
       for (uint j = i + 1; j < indices.size(); j++) {
-        matToMerge(0, matToMergeCol) = indices(i) ;
-        matToMerge(1, matToMergeCol) = indices(j) ;
+        matToMerge(0, matToMergeCol) = indices(j) ;
+        matToMerge(1, matToMergeCol) = indices(i) ; // We want a lower-triangular matrix, hence j then i.
         matToMergeCol++ ;
       }
     }
     locations = arma::join_rows(locations, matToMerge) ;
   }
-  return arma::sp_mat(locations, arma::vec(locations.n_cols, arma::fill::ones)) ;
+  return arma::sp_umat(locations, arma::uvec(locations.n_cols, arma::fill::ones)) ;
 }
 
 // [[Rcpp::export]]
 
-arma::sp_mat getSummaryMatRcpp(List clusMemVecList) {
-  arma::sp_mat resultMatrix = getCoclusterMat(Rcpp::as<IntegerVector>(clusMemVecList.at(0))) ;
+arma::sp_umat getSumMatRcpp(List clusMemVecList) {
+  arma::sp_umat resultMatrix = getCoclusterMat(Rcpp::as<IntegerVector>(clusMemVecList.at(0))) ;
   for (uint i = 1; i < clusMemVecList.size(); i++) {
     resultMatrix += getCoclusterMat(Rcpp::as<IntegerVector>(clusMemVecList.at(i))) ;
   }
-  return resultMatrix / clusMemVecList.size() ;
+  return resultMatrix ;
 }
 
