@@ -109,10 +109,12 @@ gen.covidCluster.control <- function(lengthForNullExtBranchesInPhylo = 1e-8, num
   list(lengthForNullExtBranchesInPhylo = lengthForNullExtBranchesInPhylo, numReplicatesForNodeTimes = numReplicatesForNodeTimes,  numReplicatesForCoalRates = numReplicatesForCoalRates, numThreads = numThreads, clusterCriterion = clusterCriterion[[1]], skipMrBayes = skipMrBayes, MrBayesOutputThinningRate = MrBayesOutputThinningRate, hclustMethod = hclustMethod, linkageRequirement = linkageRequirement, saveArgs = saveArgs, lambdaPriorCV = lambdaPriorCV)
 }
 
-clusterFromMrBayesOutput <- function(seqsTimestampsPOSIXct, seqsRegionStamps, MrBayesTreesFilename, MrBayesParametersFilename = NULL, clusterRegion, clusterCriterion, burninFraction = 0.5, linkageRequirement, distLimit, epidemicRootTimePOSIXct, perSiteClockRate, control = gen.covidCluster.control()) {
+clusterFromMrBayesOutput <- function(seqsTimestampsPOSIXct, seqsRegionStamps, MrBayesTreesFilename, MrBayesParametersFilename = NULL, clusterRegion, clusterCriterion, burninFraction = 0.5, linkageRequirement = 0.5, distLimit, epidemicRootTimePOSIXct, perSiteClockRate, control = gen.covidCluster.control()) {
   perSiteClockRate <- perSiteClockRate/365 # Time is expressed in days in the code, whereas perSiteClockRate is expressed in substitutions per site per *year*.
   estRootTime <- as.numeric(epidemicRootTimePOSIXct)/86400
+
   control <- do.call("gen.covidCluster.control", control)
+  control$linkageRequirement <- linkageRequirement
   control$clusteringCriterion <- clusterCriterion
   control$distLimit <- distLimit
   control$clusterRegion <- clusterRegion
@@ -539,6 +541,7 @@ produceClusters <- function(clusMembershipList, control) {
   hierCluster <- cutree(reorderedSummaryMatAndHclustObj$hclustObject, h = 1 - control$linkageRequirement)
   cat("Done \n")
   list(
+    adjMatrix = summaryMat,
     hclustObject = reorderedSummaryMatAndHclustObj$hclustObject,
     MAPclusters = MAPclusters,
     hierarchicalClusters = hierCluster)
