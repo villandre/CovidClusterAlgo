@@ -103,6 +103,7 @@ covidCluster <- function(
     output$args <- mget(names(formals()))
   }
   output$introSizeFreqTables <- clusMembershipVecList$introSizeFreqTables
+  output$clusSizeDist <- clusMembershipVecList$clusSizeDist
   output
 }
 
@@ -120,11 +121,11 @@ clusterFromMrBayesOutput <- function(seqsTimestampsPOSIXct, seqsRegionStamps, Mr
   control$distLimit <- distLimit
   control$clusterRegion <- clusterRegion
 
-  if (is.null(MrBayesParametersFilename)) {
-    fileRoot <- stringr::str_extract(MrBayesTreesFilename, pattern = ".*(?=\\.t$)")
-    MrBayesParametersFilename <- paste(fileRoot, ".p", sep = "")
-    if (!file.exists(MrBayesParametersFilename)) stop("Could not infer parameter values filename. Please enter value for argument MrBayesParametersFilename.")
-  }
+  # if (is.null(MrBayesParametersFilename)) {
+  #   fileRoot <- stringr::str_extract(MrBayesTreesFilename, pattern = ".*(?=\\.t$)")
+  #   MrBayesParametersFilename <- paste(fileRoot, ".p", sep = "")
+  #   if (!file.exists(MrBayesParametersFilename)) stop("Could not infer parameter values filename. Please enter value for argument MrBayesParametersFilename.")
+  # }
   treeSample <- ape::read.nexus(MrBayesTreesFilename)
   numItersToDrop <- ceiling(burninFraction * length(treeSample))
   itersToKeep <- seq(from = numItersToDrop + 1, to = length(treeSample), by = ceiling(1/control$MrBayesOutputThinningRate))
@@ -135,6 +136,7 @@ clusterFromMrBayesOutput <- function(seqsTimestampsPOSIXct, seqsRegionStamps, Mr
   clusMembershipVecList <- .simulateClusMembership(phyloList = treeSample, targetRegion = clusterRegion, timestamps = seqsTimestampsPOSIXct, regionStamps = seqsRegionStamps, clockRate = perSiteClockRate, rootTime = estRootTime, covidCluster.control = control)
   output <- produceClusters(clusMembershipVecList, control = control)
   output$introSizeFreqTables <- clusMembershipVecList$introSizeFreqTables
+  output$clusSizeDist <- clusMembershipVecList$clusSizeDist
   output
 }
 
@@ -189,10 +191,12 @@ gen.priors.control <- function() {
 
   combinedVecs <- do.call("c", lapply(clusMembershipCondOnPhylo[indicesToKeep], "[[", "clusVectors"))
   seqsInOrderNames <- names(combinedVecs[[1]])
+  clusSizeDist <- .summariseClusSizeDists(combinedVecs)
   list(
     clusMemVecList = lapply(combinedVecs, function(clusMemVec) as.integer(factor(clusMemVec[seqsInOrderNames]))),
     seqNames = seqsInOrderNames,
-    introSizeFreqTables = lapply(clusMembershipCondOnPhylo, "[[", "introSizesDist")) # Call to factor removes sequence names... For memory reasons, better to keep names separate.
+    introSizeFreqTables = lapply(clusMembershipCondOnPhylo, "[[", "introSizesDist"), # Call to factor removes sequence names... For memory reasons, better to keep names separate.
+    clusSizeDist = clusSizeDist)
 }
 
 .writeMrBayesFiles <- function(DNAbinData, nexusFilename, folderForMrBayesFiles, outgroup, control) {
@@ -586,4 +590,26 @@ reorder_cormat <- function(sparseCormat, method) {
   hc <- hclust(dd, method = method)
   denseMatrixReordered <- denseMatrix[hc$order, hc$order]
   list(sparseMatrix = as(denseMatrixReordered, "sparseMatrix"), hclustObject = hc)
+}
+
+# Not very fast, but only needs to be run once, which should take at most a couple of minutes
+.summariseClusSizeDists <- function(clusMemVecList) {
+  maxFromList <- max(sapply(clusMemVecList, function(clusVec) length(unique(clusVec))))
+  envirForMatch <- new.env(size = 300) # I don't think the size argument really matters...
+  sizeNameVec <- as.character(1:maxFromList)
+
+  for (listElement in clusMemVecList) {
+    freqTable <- table(table(listElement))
+    freqTable <- freqTable/(sum(freqTable) * length(clusMemVecList))
+    for (sizeName in names(freqTable)) {
+      if (sizeName %in% ls(envirForMatch)) {
+        envirForMatch[[sizeName]] <- envirForMatch[[sizeName]] + freqTable[[sizeName]]
+      } else {
+        assign(x = sizeName, value = freqTable[[sizeName]], envir = envirForMatch)
+      }
+    }
+  }
+  envirAsVec <- mget(x = ls(envirForMatch), envir = envirForMatch)
+  objectToReturn <- do.call("c", envirAsVec)
+  objectToReturn[order(as.numeric(names(objectToReturn)))]
 }
