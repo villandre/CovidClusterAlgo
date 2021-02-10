@@ -104,6 +104,7 @@ covidCluster <- function(
   }
   output$introSizeFreqTables <- clusMembershipVecList$introSizeFreqTables
   output$clusSizeDist <- clusMembershipVecList$clusSizeDist
+  output$numTrees <- clusMembershipVecList$numTrees
   output
 }
 
@@ -137,6 +138,7 @@ clusterFromMrBayesOutput <- function(seqsTimestampsPOSIXct, seqsRegionStamps, Mr
   output <- produceClusters(clusMembershipVecList, control = control)
   output$introSizeFreqTables <- clusMembershipVecList$introSizeFreqTables
   output$clusSizeDist <- clusMembershipVecList$clusSizeDist
+  output$numTrees <- clusMembershipVecList$numTrees
   output
 }
 
@@ -196,7 +198,8 @@ gen.priors.control <- function() {
     clusMemVecList = lapply(combinedVecs, function(clusMemVec) as.integer(factor(clusMemVec[seqsInOrderNames]))),
     seqNames = seqsInOrderNames,
     introSizeFreqTables = lapply(clusMembershipCondOnPhylo, "[[", "introSizesDist"), # Call to factor removes sequence names... For memory reasons, better to keep names separate.
-    clusSizeDist = clusSizeDist)
+    clusSizeDist = clusSizeDist,
+    numTrees = length(combinedVecs))
 }
 
 .writeMrBayesFiles <- function(DNAbinData, nexusFilename, folderForMrBayesFiles, outgroup, control) {
