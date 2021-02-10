@@ -89,13 +89,13 @@ covidCluster <- function(
   treeSampleFile <- paste(MrBayesOutputFilenamePrefix, ".t", sep = "")
 
   treeSample <- ape::read.nexus(treeSampleFile)
-  numItersToDrop <- floor(MrBayes.control$burninfrac * length(treeSample))
+  numItersToDrop <- ceiling(MrBayes.control$burninfrac * length(treeSample))
   itersToKeep <- seq(from = numItersToDrop + 1, to = length(treeSample), by = ceiling(1/control$MrBayesOutputThinningRate))
   treeSample <- treeSample[itersToKeep]
   # We also read in associated parameter values...
 
-  parameterValuesFile <- paste(MrBayesOutputFilenamePrefix, ".p", sep = "")
-  parameterValues <- .formatParameterFiles(parameterValuesFile, itersToKeep = itersToKeep, control = MrBayes.control)
+  # parameterValuesFile <- paste(MrBayesOutputFilenamePrefix, ".p", sep = "")
+  # parameterValues <- .formatParameterFiles(parameterValuesFile, itersToKeep = itersToKeep, control = MrBayes.control)
 
   clusMembershipVecList <- .simulateClusMembership(phyloList = treeSample, targetRegion = clusterRegion, timestamps = seqsTimestampsPOSIXct, regionStamps = seqsRegionStamps, clockRate = perSiteClockRate, rootTime = estRootTime, covidCluster.control = control, priors.control = priors.control)
   output <- produceClusters(clusMembershipVecList, control = control)
@@ -126,11 +126,11 @@ clusterFromMrBayesOutput <- function(seqsTimestampsPOSIXct, seqsRegionStamps, Mr
     if (!file.exists(MrBayesParametersFilename)) stop("Could not infer parameter values filename. Please enter value for argument MrBayesParametersFilename.")
   }
   treeSample <- ape::read.nexus(MrBayesTreesFilename)
-  numItersToDrop <- floor(burninFraction * length(treeSample))
+  numItersToDrop <- ceiling(burninFraction * length(treeSample))
   itersToKeep <- seq(from = numItersToDrop + 1, to = length(treeSample), by = ceiling(1/control$MrBayesOutputThinningRate))
   treeSample <- treeSample[itersToKeep]
 
-  parameterValues <- .formatParameterFiles(MrBayesParametersFilename, itersToKeep = itersToKeep)
+  # parameterValues <- .formatParameterFiles(MrBayesParametersFilename, itersToKeep = itersToKeep)
 
   clusMembershipVecList <- .simulateClusMembership(phyloList = treeSample, targetRegion = clusterRegion, timestamps = seqsTimestampsPOSIXct, regionStamps = seqsRegionStamps, clockRate = perSiteClockRate, rootTime = estRootTime, covidCluster.control = control)
   output <- produceClusters(clusMembershipVecList, control = control)
