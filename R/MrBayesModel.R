@@ -102,6 +102,7 @@ covidCluster <- function(
   if (control$saveArgs) {
     output$args <- mget(names(formals()))
   }
+  output$introSizeFreqTables <- clusMembershipVecList$introSizeFreqTables
   output
 }
 
@@ -133,6 +134,7 @@ clusterFromMrBayesOutput <- function(seqsTimestampsPOSIXct, seqsRegionStamps, Mr
 
   clusMembershipVecList <- .simulateClusMembership(phyloList = treeSample, targetRegion = clusterRegion, timestamps = seqsTimestampsPOSIXct, regionStamps = seqsRegionStamps, clockRate = perSiteClockRate, rootTime = estRootTime, covidCluster.control = control)
   output <- produceClusters(clusMembershipVecList, control = control)
+  output$introSizeFreqTables <- clusMembershipVecList$introSizeFreqTables
   output
 }
 
@@ -184,9 +186,13 @@ gen.priors.control <- function() {
   cat("Done \n")
   }
   indicesToKeep <- sapply(clusMembershipCondOnPhylo, FUN = function(listElement) !("error" %in% class(listElement)))
-  combinedVecs <- do.call("c", clusMembershipCondOnPhylo[indicesToKeep])
+
+  combinedVecs <- do.call("c", lapply(clusMembershipCondOnPhylo[indicesToKeep], "[[", "clusVectors"))
   seqsInOrderNames <- names(combinedVecs[[1]])
-  list(clusMemVecList = lapply(combinedVecs, function(clusMemVec) as.integer(factor(clusMemVec[seqsInOrderNames]))), seqNames = seqsInOrderNames) # Call to factor removes sequence names... For memory reasons, better to keep names separate.
+  list(
+    clusMemVecList = lapply(combinedVecs, function(clusMemVec) as.integer(factor(clusMemVec[seqsInOrderNames]))),
+    seqNames = seqsInOrderNames,
+    introSizeFreqTables = lapply(clusMembershipCondOnPhylo, "[[", "introSizesDist")) # Call to factor removes sequence names... For memory reasons, better to keep names separate.
 }
 
 .writeMrBayesFiles <- function(DNAbinData, nexusFilename, folderForMrBayesFiles, outgroup, control) {
@@ -280,7 +286,16 @@ gen.priors.control <- function() {
     }
     replicate(n = control$numReplicatesForCoalRates, expr = funToReplicateInner(phyloAndTransTree = phyloAndTransTree, estRootTime = estRootTime, control = control), simplify = FALSE)
   }
- do.call("c", replicate(n = control$numReplicatesForNodeTimes, funToReplicate(phyloAndTransTree, estRootTime = estRootTime, control = control), simplify = FALSE))
+  funToGetIntroSize <- function(subtreeIndex) {
+    subtreeRootNum <- phyloAndTransTree$LambdaList[[subtreeIndex]]$rootNodeNum
+    introSize <- 0
+    if (phyloAndTransTree$node.label[[subtreeRootNum - length(phyloAndTransTree$tip.label)]]$region == targetRegion) {
+      introSize <- sum(sapply(phyloAndTransTree$tip.label, function(listElement) (listElement$region == targetRegion) & (listElement$subtreeIndex) == subtreeIndex))
+    }
+    introSize
+  }
+  introSizes <- sapply(seq_along(phyloAndTransTree$LambdaList), funToGetIntroSize)
+ list(clusVectors = do.call("c", replicate(n = control$numReplicatesForNodeTimes, funToReplicate(phyloAndTransTree, estRootTime = estRootTime, control = control), simplify = FALSE)), introSizesDist = table(introSizes[introSizes != 0]))
 }
 
 .clusterIndicesFromAdjMat <- function(adjacencyMatrix) {
