@@ -187,7 +187,8 @@ gen.priors.control <- function() {
 
   combinedVecs <- do.call("c", lapply(clusMembershipCondOnPhylo[indicesToKeep], "[[", "clusVectors"))
   seqsInOrderNames <- names(combinedVecs[[1]])
-  clusSizeDist <- .summariseClusSizeDists(combinedVecs)
+  clusSizeDist <- summariseClusSizeDistsRcpp(combinedVecs)
+  clusSizeDist <- clusSizeDist[order(as.numeric(names(clusSizeDist)))]
   list(
     clusMemVecList = lapply(combinedVecs, function(clusMemVec) as.integer(factor(clusMemVec[seqsInOrderNames]))),
     seqNames = seqsInOrderNames,

@@ -13,3 +13,7 @@ getSumMatRcpp <- function(clusMemVecList) {
     .Call('_CovidCluster_getSumMatRcpp', PACKAGE = 'CovidCluster', clusMemVecList)
 }
 
+summariseClusSizeDistsRcpp <- function(clusMemVecList) {
+    .Call('_CovidCluster_summariseClusSizeDistsRcpp', PACKAGE = 'CovidCluster', clusMemVecList)
+}
+

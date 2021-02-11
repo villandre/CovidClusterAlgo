@@ -20,9 +20,9 @@ using namespace Rcpp;
 
 arma::mat produceDistTipsAncestorsMatrixRcpp(uint numTips,
                                        uint numNodes,
-                                       IntegerVector branchMatchIndexVec,
+                                       IntegerVector & branchMatchIndexVec,
                                        std::vector<double> edgeLengthsVec,
-                                       IntegerVector parentNumVec) {
+                                       IntegerVector & parentNumVec) {
   uint branchMatchIndex = 0 ;
   arma::mat containerMatrix(numTips, numNodes, arma::fill::zeros) ;
   uint parentNum = 0 ;
@@ -358,8 +358,8 @@ List simulateNodeTimesRcpp(
     NumericVector & tipTimes,
     IntegerMatrix & edgeMatrix,
     List & childrenNumList,
-    IntegerVector branchMatchIndexVec,
-    IntegerVector parentNumVec) {
+    IntegerVector & branchMatchIndexVec,
+    IntegerVector & parentNumVec) {
   std::vector<double> vertexTimes(subtreeIndexVec.size()) ;
   for (uint i = 0; i < tipTimes.size(); i++) {
     vertexTimes[i] = tipTimes(i) ;
@@ -399,7 +399,7 @@ List simulateNodeTimesRcpp(
   return List::create(Named("vertexTimes") = Rcpp::wrap(nodeTimes), Named("edgeLengths") = Rcpp::wrap(edgeLengths), Named("distTipsAncestorsMatrix") = distTipsAncestors) ;
 }
 
-arma::sp_umat getCoclusterMat(IntegerVector clusMemVec) {
+arma::sp_umat getCoclusterMat(IntegerVector & clusMemVec) {
   arma::uvec uniqueValues = arma::unique(Rcpp::as<arma::uvec>(clusMemVec)) ;
   arma::umat locations = arma::umat(2, clusMemVec.size()) ;
   for (uint colIndex = 0; colIndex < locations.n_cols; colIndex++) {
@@ -425,11 +425,33 @@ arma::sp_umat getCoclusterMat(IntegerVector clusMemVec) {
 
 // [[Rcpp::export]]
 
-arma::sp_umat getSumMatRcpp(List clusMemVecList) {
-  arma::sp_umat resultMatrix = getCoclusterMat(Rcpp::as<IntegerVector>(clusMemVecList.at(0))) ;
+arma::sp_umat getSumMatRcpp(List & clusMemVecList) {
+  IntegerVector vecToTransform = Rcpp::as<IntegerVector>(clusMemVecList.at(0)) ;
+  arma::sp_umat resultMatrix = getCoclusterMat(vecToTransform) ;
   for (uint i = 1; i < clusMemVecList.size(); i++) {
-    resultMatrix += getCoclusterMat(Rcpp::as<IntegerVector>(clusMemVecList.at(i))) ;
+    vecToTransform = Rcpp::as<IntegerVector>(clusMemVecList.at(i)) ;
+    resultMatrix += getCoclusterMat(vecToTransform) ;
   }
   return resultMatrix ;
 }
 
+// [[Rcpp::export]]
+
+std::unordered_map<int, double> summariseClusSizeDistsRcpp(List & clusMemVecList) {
+  arma::uvec sampleVec = Rcpp::as<arma::uvec>(clusMemVecList.at(0)) ;
+  std::unordered_map<int, double> freqVec ;
+
+  for (uint i = 0; i < clusMemVecList.size(); i++) {
+    sampleVec = Rcpp::as<arma::uvec>(clusMemVecList.at(i)) ;
+    arma::uvec clusSizes = arma::hist(sampleVec, unique(sampleVec)) ;
+    for (auto & clusSize : clusSizes) {
+      double incrementValue = 1/double(clusSizes.size() * clusMemVecList.size()) ;
+      if (freqVec.find(clusSize) == freqVec.end()) {
+        freqVec[clusSize] = incrementValue ;
+      } else {
+        freqVec[clusSize] += incrementValue ;
+      }
+    }
+  }
+  return freqVec ;
+}

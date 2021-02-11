@@ -29,7 +29,7 @@ BEGIN_RCPP
 END_RCPP
 }
 // simulateNodeTimesRcpp
-List simulateNodeTimesRcpp(uint numTips, NumericVector& baseRatePerIntroduction, IntegerVector& orderedVertices, IntegerVector& subtreeIndexVec, NumericVector& tipTimes, IntegerMatrix& edgeMatrix, List& childrenNumList, IntegerVector branchMatchIndexVec, IntegerVector parentNumVec);
+List simulateNodeTimesRcpp(uint numTips, NumericVector& baseRatePerIntroduction, IntegerVector& orderedVertices, IntegerVector& subtreeIndexVec, NumericVector& tipTimes, IntegerMatrix& edgeMatrix, List& childrenNumList, IntegerVector& branchMatchIndexVec, IntegerVector& parentNumVec);
 RcppExport SEXP _CovidCluster_simulateNodeTimesRcpp(SEXP numTipsSEXP, SEXP baseRatePerIntroductionSEXP, SEXP orderedVerticesSEXP, SEXP subtreeIndexVecSEXP, SEXP tipTimesSEXP, SEXP edgeMatrixSEXP, SEXP childrenNumListSEXP, SEXP branchMatchIndexVecSEXP, SEXP parentNumVecSEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
@@ -41,20 +41,31 @@ BEGIN_RCPP
     Rcpp::traits::input_parameter< NumericVector& >::type tipTimes(tipTimesSEXP);
     Rcpp::traits::input_parameter< IntegerMatrix& >::type edgeMatrix(edgeMatrixSEXP);
     Rcpp::traits::input_parameter< List& >::type childrenNumList(childrenNumListSEXP);
-    Rcpp::traits::input_parameter< IntegerVector >::type branchMatchIndexVec(branchMatchIndexVecSEXP);
-    Rcpp::traits::input_parameter< IntegerVector >::type parentNumVec(parentNumVecSEXP);
+    Rcpp::traits::input_parameter< IntegerVector& >::type branchMatchIndexVec(branchMatchIndexVecSEXP);
+    Rcpp::traits::input_parameter< IntegerVector& >::type parentNumVec(parentNumVecSEXP);
     rcpp_result_gen = Rcpp::wrap(simulateNodeTimesRcpp(numTips, baseRatePerIntroduction, orderedVertices, subtreeIndexVec, tipTimes, edgeMatrix, childrenNumList, branchMatchIndexVec, parentNumVec));
     return rcpp_result_gen;
 END_RCPP
 }
 // getSumMatRcpp
-arma::sp_umat getSumMatRcpp(List clusMemVecList);
+arma::sp_umat getSumMatRcpp(List& clusMemVecList);
 RcppExport SEXP _CovidCluster_getSumMatRcpp(SEXP clusMemVecListSEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
-    Rcpp::traits::input_parameter< List >::type clusMemVecList(clusMemVecListSEXP);
+    Rcpp::traits::input_parameter< List& >::type clusMemVecList(clusMemVecListSEXP);
     rcpp_result_gen = Rcpp::wrap(getSumMatRcpp(clusMemVecList));
+    return rcpp_result_gen;
+END_RCPP
+}
+// summariseClusSizeDistsRcpp
+std::unordered_map<int, double> summariseClusSizeDistsRcpp(List& clusMemVecList);
+RcppExport SEXP _CovidCluster_summariseClusSizeDistsRcpp(SEXP clusMemVecListSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< List& >::type clusMemVecList(clusMemVecListSEXP);
+    rcpp_result_gen = Rcpp::wrap(summariseClusSizeDistsRcpp(clusMemVecList));
     return rcpp_result_gen;
 END_RCPP
 }
@@ -63,6 +74,7 @@ static const R_CallMethodDef CallEntries[] = {
     {"_CovidCluster_getMRCAclustersRcpp", (DL_FUNC) &_CovidCluster_getMRCAclustersRcpp, 12},
     {"_CovidCluster_simulateNodeTimesRcpp", (DL_FUNC) &_CovidCluster_simulateNodeTimesRcpp, 9},
     {"_CovidCluster_getSumMatRcpp", (DL_FUNC) &_CovidCluster_getSumMatRcpp, 1},
+    {"_CovidCluster_summariseClusSizeDistsRcpp", (DL_FUNC) &_CovidCluster_summariseClusSizeDistsRcpp, 1},
     {NULL, NULL, 0}
 };
 
