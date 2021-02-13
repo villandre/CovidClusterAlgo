@@ -149,7 +149,8 @@ std::unordered_map<std::string, uint> getMRCAclustersRcpp(
     int subtreeIndex,
     int numTips,
     std::string regionLabel,
-    int distLimit) {
+    int distLimit,
+    bool printDetails = false) {
   // ProfilerStart("/home/luc/temp/profile.log") ;
   // std::vector<std::vector<std::string>> clusterList ;
   // for (uint i = 0; i < 45000; i++) {

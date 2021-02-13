@@ -129,7 +129,6 @@ phylo <- function(edge, edge.length, tip.label, node.label = NULL) {
 
 .computeSubtreeRootNums <- function(phyloAndTransTree) {
   orderedVertexNums <- .getVertexOrderByDepth(phyloAndTransTree)
-  # orderedVertexNums <- phyloAndTransTree$vertexOrderByDepth
   orderedVertexNums <- orderedVertexNums[orderedVertexNums > ape::Ntip(phyloAndTransTree)]
   snipPoints <- vector(mode = "numeric")
   for (vertexNum in tail(orderedVertexNums, n = -1)) {

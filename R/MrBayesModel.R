@@ -103,8 +103,8 @@ covidCluster <- function(
   output
 }
 
-gen.covidCluster.control <- function(lengthForNullExtBranchesInPhylo = 1e-8, numReplicatesForNodeTimes = 500, numReplicatesForCoalRates = 500,  numThreads = 1, clusterCriterion = c("mrca", "cophenetic"), skipMrBayes = FALSE, MrBayesOutputThinningRate = 1, hclustMethod = "single", linkageRequirement = 0.90, saveArgs = FALSE, lambdaPriorCV = 3) {
-  list(lengthForNullExtBranchesInPhylo = lengthForNullExtBranchesInPhylo, numReplicatesForNodeTimes = numReplicatesForNodeTimes,  numReplicatesForCoalRates = numReplicatesForCoalRates, numThreads = numThreads, clusterCriterion = clusterCriterion[[1]], skipMrBayes = skipMrBayes, MrBayesOutputThinningRate = MrBayesOutputThinningRate, hclustMethod = hclustMethod, linkageRequirement = linkageRequirement, saveArgs = saveArgs, lambdaPriorCV = lambdaPriorCV)
+gen.covidCluster.control <- function(lengthForNullExtBranchesInPhylo = 1e-8, numReplicatesForNodeTimes = 500, numReplicatesForCoalRates = 500,  numThreads = 1, clusterCriterion = c("mrca", "cophenetic"), skipMrBayes = FALSE, MrBayesOutputThinningRate = 1, hclustMethod = "single", linkageRequirement = 0.90, saveArgs = FALSE, logLambdaPriorSD = log(2)/2) {
+  list(lengthForNullExtBranchesInPhylo = lengthForNullExtBranchesInPhylo, numReplicatesForNodeTimes = numReplicatesForNodeTimes,  numReplicatesForCoalRates = numReplicatesForCoalRates, numThreads = numThreads, clusterCriterion = clusterCriterion[[1]], skipMrBayes = skipMrBayes, MrBayesOutputThinningRate = MrBayesOutputThinningRate, hclustMethod = hclustMethod, linkageRequirement = linkageRequirement, saveArgs = saveArgs, logLambdaPriorSD = logLambdaPriorSD)
 }
 
 clusterFromMrBayesOutput <- function(seqsTimestampsPOSIXct, seqsRegionStamps, MrBayesTreesFilename, MrBayesParametersFilename = NULL, clusterRegion, clusterCriterion, burninFraction = 0.5, linkageRequirement = 0.5, distLimit, perSiteClockRate, control = gen.covidCluster.control()) {
@@ -175,12 +175,14 @@ gen.priors.control <- function() {
   if (covidCluster.control$numThreads > 1) {
     cat("Simulating transmission trees... ")
     cl <- parallel::makeForkCluster(covidCluster.control$numThreads)
-    clusMembershipCondOnPhylo <- parallel::parLapply(cl = cl, X = phyloList, fun = function(listElement) tryCatch(expr = .simulateClustersFromStartingTree(phylogeny = listElement, timestampsInDays = timestampsInDays, regionStamps = regionStamps, logClockRatePriorMean = log(clockRate), targetRegion = targetRegion, control = covidCluster.control), error = function(e) e))
+    # clusMembershipCondOnPhylo <- parallel::parLapply(cl = cl, X = phyloList, fun = function(listElement) tryCatch(expr = .simulateClustersFromStartingTree(phylogeny = listElement, timestampsInDays = timestampsInDays, regionStamps = regionStamps, logClockRatePriorMean = log(clockRate), targetRegion = targetRegion, control = covidCluster.control), error = function(e) e))
+    clusMembershipCondOnPhylo <- parallel::parLapply(cl = cl, X = phyloList, fun = .simulateClustersFromStartingTree, timestampsInDays = timestampsInDays, regionStamps = regionStamps, logClockRatePriorMean = log(clockRate), targetRegion = targetRegion, control = covidCluster.control)
     cat("Done \n")
     parallel::stopCluster(cl)
   } else {
     cat("Simulating transmission trees... ")
-  clusMembershipCondOnPhylo <- lapply(phyloList, FUN = function(listElement) tryCatch(expr = .simulateClustersFromStartingTree(phylogeny = listElement, timestampsInDays = timestampsInDays, regionStamps = regionStamps, logClockRatePriorMean = log(clockRate), targetRegion = targetRegion, control = covidCluster.control), error = function(e) e))
+  # clusMembershipCondOnPhylo <- lapply(phyloList, FUN = function(listElement) tryCatch(expr = .simulateClustersFromStartingTree(phylogeny = listElement, timestampsInDays = timestampsInDays, regionStamps = regionStamps, logClockRatePriorMean = log(clockRate), targetRegion = targetRegion, control = covidCluster.control), error = function(e) e))
+    clusMembershipCondOnPhylo <- lapply(phyloList, FUN = .simulateClustersFromStartingTree, timestampsInDays = timestampsInDays, regionStamps = regionStamps, logClockRatePriorMean = log(clockRate), targetRegion = targetRegion, control = covidCluster.control)
   cat("Done \n")
   }
   indicesToKeep <- sapply(clusMembershipCondOnPhylo, FUN = function(listElement) !("error" %in% class(listElement)))
@@ -228,8 +230,8 @@ gen.priors.control <- function() {
   phyloAndTransTree <- .incrementPhylo(.genStartPhyloAndTransTree(phylogeny = phylogeny, timestampsInDays = timestampsInDays, regionStamps = regionStamps, logClockRatePriorMean = logClockRatePriorMean, control = control), clusterRegion = targetRegion)
   funToReplicate <- function(phyloAndTransTree, control) {
     medianRates <- sapply(phyloAndTransTree$LambdaList, "[[", "Lambda")
-    # coalRates <- rnorm(n = length(phyloAndTransTree$LambdaList), mean = meanCoalRates, sd = meanCoalRates * control$lambdaPriorCV)
-    coalRates <- rlnorm(n = length(medianRates), meanlog = log(medianRates), sdlog = abs(log(medianRates)))
+    coalRates <- exp(rnorm(n = length(phyloAndTransTree$LambdaList), mean = log(medianRates), sd = control$logLambdaPriorSD))
+    # coalRates <- rlnorm(n = length(medianRates), meanlog = log(medianRates), sdlog = abs(log(medianRates)))
     for (i in seq_along(phyloAndTransTree$LambdaList)) {
       phyloAndTransTree$LambdaList[[i]]$Lambda <- coalRates[[i]]
     }
@@ -547,9 +549,10 @@ produceClusters <- function(clusMembershipList, control) {
   cat("Summarising cluster configurations... \n")
   summaryMat <- getSumMatRcpp(clusMembershipList$clusMemVecList)/length(clusMembershipList$clusMemVecList)
   hashClusInd <- sapply(clusMembershipList$clusMemVecList, digest::digest)
-  names(clusMembershipList$clusMemVecList) <- hashClusInd
+  # names(clusMembershipList$clusMemVecList) <- hashClusInd
   frequencies <- table(hashClusInd)
-  MAPclusters <- clusMembershipList$clusMemVecList[[names(frequencies)[[which.max(frequencies)]]]]
+  elementToExtract <- match(names(frequencies)[[which.max(frequencies)]], hashClusInd)
+  MAPclusters <- clusMembershipList$clusMemVecList[[elementToExtract]]
   names(MAPclusters) <- clusMembershipList$seqNames
   cat("The MAP configuration was produced in", max(frequencies), "trees out of", length(clusMembershipList$clusMemVecList), "\n")
   rownames(summaryMat) <- colnames(summaryMat) <- clusMembershipList$seqNames
