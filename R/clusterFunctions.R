@@ -40,51 +40,56 @@ phylo <- function(edge, edge.length, tip.label, node.label = NULL) {
   return(.getNodeLabel(phylogeny, vertexNum))
 }
 
-.identifyNodeRegions <- function(phyloAndTransTree) {
+.identifyNodeRegions <- function(phyloAndTransTree, rootRegion) {
   numTips <- length(phyloAndTransTree$tip.label)
+  phyloAndTransTree$node.label[[1]]$region <- rootRegion
   # We first perform a bottom-up sweep of the tree.
   treeVertexNums <- rev(phyloAndTransTree$vertexOrderByDepth)
   for (vertexNum in head(treeVertexNums, -1)) { # We exclude the root node.
-    parentNum <- phyloAndTransTree$parentNumVec[[vertexNum]]
-    currentRegion <- NA
-    if (vertexNum <= numTips) {
-      currentRegion <- phyloAndTransTree$tip.label[[vertexNum]]$region
-    } else {
-      currentRegion <- phyloAndTransTree$node.label[[vertexNum - numTips]]$region
-    }
-    parentRegion <- phyloAndTransTree$node.label[[parentNum - numTips]]$region
-    if (is.na(parentRegion[[1]])) {
-      phyloAndTransTree$node.label[[parentNum - numTips]]$region <- currentRegion
-    } else {
-      regionIntersection <- intersect(currentRegion, parentRegion)
-      if (length(regionIntersection) > 0) {
-        phyloAndTransTree$node.label[[parentNum - numTips]]$region <- regionIntersection
+    if (vertexNum <= numTips) next
+    childrenNums <- phyloAndTransTree$childrenNumList[[vertexNum]]
+    childrenRegions <- lapply(childrenNums, function(childNum) {
+      if (childNum <= numTips) {
+        return(phyloAndTransTree$tip.label[[childNum]]$region)
       } else {
-        phyloAndTransTree$node.label[[parentNum - numTips]]$region <- c(currentRegion, parentRegion) # The union of regions.
+        return(phyloAndTransTree$node.label[[childNum - numTips]]$region)
       }
+    })
+    regionIntersection <- Reduce(f = "intersect", x = childrenRegions)
+
+    if (length(regionIntersection) > 0) {
+      phyloAndTransTree$node.label[[vertexNum - numTips]]$region <- regionIntersection
+    } else {
+      phyloAndTransTree$node.label[[vertexNum - numTips]]$region <- unique(do.call("c", childrenRegions))
     }
   }
 
-  # We now perform a top-down sweep to resolve ambiguities.
-
-  for (vertexNum in phyloAndTransTree$vertexOrderByDepth) {
+  # We now perform a top-down sweep
+  # No need to consider the root: it is already resolved
+  for (vertexNum in tail(phyloAndTransTree$vertexOrderByDepth, n = -1)) {
     if (vertexNum <= numTips) next # Tips are already resolved
-    regionSelected <- currentRegion <- phyloAndTransTree$node.label[[vertexNum - numTips]]$region
-    if (length(currentRegion) > 1) {
-      regionSelected <- sample(currentRegion, size = 1)
-      phyloAndTransTree$node.label[[vertexNum - numTips]]$region <- regionSelected
+    currentRegion <- phyloAndTransTree$node.label[[vertexNum - numTips]]$region
+    if (length(currentRegion) > 1) { # Node is unresolved
+      parentRegion <- phyloAndTransTree$node.label[[phyloAndTransTree$parentNumVec[[vertexNum]] - numTips]]$region
+      regionIntersection <- intersect(parentRegion, currentRegion)
+      if (length(regionIntersection) > 0) phyloAndTransTree$node.label[[vertexNum - numTips]]$region <- regionIntersection
     }
-    nodeChildren <- phyloAndTransTree$childrenNumList[[vertexNum]]
-    nodeChildren <- nodeChildren[nodeChildren > numTips] # Tips are already resolved
-    for (child in nodeChildren) { # Is supposed to work even if nodeChildren is empty
-      childRegion <- phyloAndTransTree$node.label[[child - numTips]]$region
-      if (length(childRegion) > 1) { # Child is unresolved
-        regionIntersect <- intersect(regionSelected, childRegion)
-        if (length(regionIntersect) > 0) {
-          phyloAndTransTree$node.label[[child - numTips]]$region <- regionSelected
-        }
-      }
+  }
+
+  # We now perform one last bottom-up search, resolving ambiguities based on the child node closest in the phylogeny (rather than the transmission tree, to lessen the computational burden)
+  for (vertexNum in head(treeVertexNums, -1)) {
+    if (vertexNum <= numTips) next
+    if (length(phyloAndTransTree$node.label[[vertexNum - numTips]]$region) == 1) next
+    childrenNums <- phyloAndTransTree$childrenNumList[[vertexNum]]
+    childrenEdgeLengths <- sapply(phyloAndTransTree$edge.length[phyloAndTransTree$branchMatchIndex[childrenNums]], "[[", "phylogeny")
+    selectedChild <- childrenNums[[which.min(childrenEdgeLengths)]]
+    selectedRegion <- NULL
+    if (selectedChild <= numTips) {
+      selectedRegion <- phyloAndTransTree$tip.label[[selectedChild]]$region
+    } else {
+      selectedRegion <- phyloAndTransTree$node.label[[selectedChild - numTips]]$region
     }
+    phyloAndTransTree$node.label[[vertexNum - numTips]]$region <- selectedRegion
   }
   phyloAndTransTree
 }

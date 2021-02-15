@@ -37,6 +37,7 @@ covidCluster <- function(
   DNAbinData,
   outgroup,
   clusterRegion = NULL,
+  rootRegion = NULL,
   covariateFrame = NULL,
   seqsTimestampsPOSIXct = NULL,
   folderForMrBayesFiles = NULL,
@@ -92,7 +93,7 @@ covidCluster <- function(
   # parameterValuesFile <- paste(MrBayesOutputFilenamePrefix, ".p", sep = "")
   # parameterValues <- .formatParameterFiles(parameterValuesFile, itersToKeep = itersToKeep, control = MrBayes.control)
 
-  clusMembershipVecList <- .simulateClusMembership(phyloList = treeSample, targetRegion = clusterRegion, timestamps = seqsTimestampsPOSIXct, regionStamps = seqsRegionStamps, clockRate = perSiteClockRate, covidCluster.control = control, priors.control = priors.control)
+  clusMembershipVecList <- .simulateClusMembership(phyloList = treeSample, targetRegion = clusterRegion, rootRegion = rootRegion, timestamps = seqsTimestampsPOSIXct, regionStamps = seqsRegionStamps, clockRate = perSiteClockRate, covidCluster.control = control, priors.control = priors.control)
   output <- produceClusters(clusMembershipVecList, control = control)
   if (control$saveArgs) {
     output$args <- mget(names(formals()))
@@ -107,7 +108,7 @@ gen.covidCluster.control <- function(lengthForNullExtBranchesInPhylo = 1e-8, num
   list(lengthForNullExtBranchesInPhylo = lengthForNullExtBranchesInPhylo, numReplicatesForNodeTimes = numReplicatesForNodeTimes,  numReplicatesForCoalRates = numReplicatesForCoalRates, numThreads = numThreads, clusterCriterion = clusterCriterion[[1]], skipMrBayes = skipMrBayes, MrBayesOutputThinningRate = MrBayesOutputThinningRate, hclustMethod = hclustMethod, linkageRequirement = linkageRequirement, saveArgs = saveArgs, logLambdaPriorSD = logLambdaPriorSD)
 }
 
-clusterFromMrBayesOutput <- function(seqsTimestampsPOSIXct, seqsRegionStamps, MrBayesTreesFilename, MrBayesParametersFilename = NULL, clusterRegion, clusterCriterion, burninFraction = 0.5, linkageRequirement = 0.5, distLimit, perSiteClockRate, control = gen.covidCluster.control()) {
+clusterFromMrBayesOutput <- function(seqsTimestampsPOSIXct, seqsRegionStamps, MrBayesTreesFilename, MrBayesParametersFilename = NULL, clusterRegion, rootRegion, clusterCriterion, burninFraction = 0.5, linkageRequirement = 0.5, distLimit, perSiteClockRate, control = gen.covidCluster.control()) {
   perSiteClockRate <- perSiteClockRate/365 # Time is expressed in days in the code, whereas perSiteClockRate is expressed in substitutions per site per *year*.
 
   control <- do.call("gen.covidCluster.control", control)
@@ -128,7 +129,7 @@ clusterFromMrBayesOutput <- function(seqsTimestampsPOSIXct, seqsRegionStamps, Mr
 
   # parameterValues <- .formatParameterFiles(MrBayesParametersFilename, itersToKeep = itersToKeep)
 
-  clusMembershipVecList <- .simulateClusMembership(phyloList = treeSample, targetRegion = clusterRegion, timestamps = seqsTimestampsPOSIXct, regionStamps = seqsRegionStamps, clockRate = perSiteClockRate, covidCluster.control = control)
+  clusMembershipVecList <- .simulateClusMembership(phyloList = treeSample, targetRegion = clusterRegion, rootRegion = rootRegion, timestamps = seqsTimestampsPOSIXct, regionStamps = seqsRegionStamps, clockRate = perSiteClockRate, covidCluster.control = control)
   output <- produceClusters(clusMembershipVecList, control = control)
   output$introSizeFreqTables <- clusMembershipVecList$introSizeFreqTables
   output$clusSizeDist <- clusMembershipVecList$clusSizeDist
@@ -166,7 +167,7 @@ gen.priors.control <- function() {
  list()
 }
 
-.simulateClusMembership <- function(phyloList, targetRegion, timestamps, regionStamps, clockRate, covidCluster.control, priors.control) {
+.simulateClusMembership <- function(phyloList, targetRegion, rootRegion, timestamps, regionStamps, clockRate, covidCluster.control, priors.control) {
   timestampsInDays <- as.numeric(timestamps)/86400
 
   names(timestampsInDays) <- names(timestamps)
@@ -176,13 +177,13 @@ gen.priors.control <- function() {
     cat("Simulating transmission trees... ")
     cl <- parallel::makeForkCluster(covidCluster.control$numThreads)
     # clusMembershipCondOnPhylo <- parallel::parLapply(cl = cl, X = phyloList, fun = function(listElement) tryCatch(expr = .simulateClustersFromStartingTree(phylogeny = listElement, timestampsInDays = timestampsInDays, regionStamps = regionStamps, logClockRatePriorMean = log(clockRate), targetRegion = targetRegion, control = covidCluster.control), error = function(e) e))
-    clusMembershipCondOnPhylo <- parallel::parLapply(cl = cl, X = phyloList, fun = .simulateClustersFromStartingTree, timestampsInDays = timestampsInDays, regionStamps = regionStamps, logClockRatePriorMean = log(clockRate), targetRegion = targetRegion, control = covidCluster.control)
+    clusMembershipCondOnPhylo <- parallel::parLapply(cl = cl, X = phyloList, fun = .simulateClustersFromStartingTree, timestampsInDays = timestampsInDays, regionStamps = regionStamps, logClockRatePriorMean = log(clockRate), targetRegion = targetRegion, rootRegion = rootRegion, control = covidCluster.control)
     cat("Done \n")
     parallel::stopCluster(cl)
   } else {
     cat("Simulating transmission trees... ")
   # clusMembershipCondOnPhylo <- lapply(phyloList, FUN = function(listElement) tryCatch(expr = .simulateClustersFromStartingTree(phylogeny = listElement, timestampsInDays = timestampsInDays, regionStamps = regionStamps, logClockRatePriorMean = log(clockRate), targetRegion = targetRegion, control = covidCluster.control), error = function(e) e))
-    clusMembershipCondOnPhylo <- lapply(phyloList, FUN = .simulateClustersFromStartingTree, timestampsInDays = timestampsInDays, regionStamps = regionStamps, logClockRatePriorMean = log(clockRate), targetRegion = targetRegion, control = covidCluster.control)
+    clusMembershipCondOnPhylo <- lapply(phyloList, FUN = .simulateClustersFromStartingTree, timestampsInDays = timestampsInDays, regionStamps = regionStamps, logClockRatePriorMean = log(clockRate), targetRegion = targetRegion, rootRegion = rootRegion, control = covidCluster.control)
   cat("Done \n")
   }
   indicesToKeep <- sapply(clusMembershipCondOnPhylo, FUN = function(listElement) !("error" %in% class(listElement)))
@@ -226,8 +227,8 @@ gen.priors.control <- function() {
 
 # subtreeClusterFun is a function that takes a phyloAndTransTree object and a region index and produces a vector of cluster membership indices.
 
-.simulateClustersFromStartingTree <- function(phylogeny,  timestampsInDays, regionStamps, logClockRatePriorMean, targetRegion, control) {
-  phyloAndTransTree <- .genStartPhyloAndTransTree(phylogeny = phylogeny, timestampsInDays = timestampsInDays, regionStamps = regionStamps, logClockRatePriorMean = logClockRatePriorMean, targetRegion = targetRegion, control = control)
+.simulateClustersFromStartingTree <- function(phylogeny,  timestampsInDays, regionStamps, logClockRatePriorMean, targetRegion, rootRegion, control) {
+  phyloAndTransTree <- .genStartPhyloAndTransTree(phylogeny = phylogeny, timestampsInDays = timestampsInDays, regionStamps = regionStamps, logClockRatePriorMean = logClockRatePriorMean, targetRegion = targetRegion, rootRegion = rootRegion, control = control)
   funToReplicate <- function(phyloAndTransTree, control) {
     medianRates <- sapply(phyloAndTransTree$LambdaList, "[[", "Lambda")
     coalRates <- exp(rnorm(n = length(phyloAndTransTree$LambdaList), mean = log(medianRates), sd = control$logLambdaPriorSD))
@@ -332,7 +333,7 @@ computeLogSum <- function(logValues) {
   newTaxonNames
 }
 
-.genStartPhyloAndTransTree <- function(phylogeny, timestampsInDays, regionStamps, logClockRatePriorMean, targetRegion, control) {
+.genStartPhyloAndTransTree <- function(phylogeny, timestampsInDays, regionStamps, logClockRatePriorMean, targetRegion, rootRegion, control) {
   phyloAndTransTree <- phylogeny
   phyloAndTransTree$edge.length <- replace(phyloAndTransTree$edge.length, which(phyloAndTransTree$edge.length == 0), control$lengthForNullExtBranchesInPhylo)
   phyloAndTransTree$tip.label <- lapply(phyloAndTransTree$tip.label, function(x) list(name = x, time = timestampsInDays[[x]], region = regionStamps[[x]]))
@@ -348,7 +349,7 @@ computeLogSum <- function(logValues) {
     phyloAndTransTree$edge.length[[i]]$logXi <- logXi[[i]]
   }
   phyloAndTransTree <- .incrementPhyloStructOnly(phyloAndTransTree)
-  phyloAndTransTree <- .identifyNodeRegions(phyloAndTransTree)
+  phyloAndTransTree <- .identifyNodeRegions(phyloAndTransTree, rootRegion = rootRegion)
   # Initialises transmission tree branch lengths conditional on phylogenetic branch lengths and an equal clock rate across branches
   subtreeRootNodes <- .computeSubtreeRootNums(phyloAndTransTree)
   subtreeRootNodeDepths <- sapply(subtreeRootNodes, function(nodeNum) length(phangorn::Ancestors(phyloAndTransTree, nodeNum, "all")) + 1)
