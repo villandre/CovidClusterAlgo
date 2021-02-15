@@ -227,7 +227,7 @@ gen.priors.control <- function() {
 # subtreeClusterFun is a function that takes a phyloAndTransTree object and a region index and produces a vector of cluster membership indices.
 
 .simulateClustersFromStartingTree <- function(phylogeny,  timestampsInDays, regionStamps, logClockRatePriorMean, targetRegion, control) {
-  phyloAndTransTree <- .incrementPhylo(.genStartPhyloAndTransTree(phylogeny = phylogeny, timestampsInDays = timestampsInDays, regionStamps = regionStamps, logClockRatePriorMean = logClockRatePriorMean, control = control), clusterRegion = targetRegion)
+  phyloAndTransTree <- .genStartPhyloAndTransTree(phylogeny = phylogeny, timestampsInDays = timestampsInDays, regionStamps = regionStamps, logClockRatePriorMean = logClockRatePriorMean, targetRegion = targetRegion, control = control)
   funToReplicate <- function(phyloAndTransTree, control) {
     medianRates <- sapply(phyloAndTransTree$LambdaList, "[[", "Lambda")
     coalRates <- exp(rnorm(n = length(phyloAndTransTree$LambdaList), mean = log(medianRates), sd = control$logLambdaPriorSD))
@@ -332,7 +332,7 @@ computeLogSum <- function(logValues) {
   newTaxonNames
 }
 
-.genStartPhyloAndTransTree <- function(phylogeny, timestampsInDays, regionStamps, logClockRatePriorMean, control) {
+.genStartPhyloAndTransTree <- function(phylogeny, timestampsInDays, regionStamps, logClockRatePriorMean, targetRegion, control) {
   phyloAndTransTree <- phylogeny
   phyloAndTransTree$edge.length <- replace(phyloAndTransTree$edge.length, which(phyloAndTransTree$edge.length == 0), control$lengthForNullExtBranchesInPhylo)
   phyloAndTransTree$tip.label <- lapply(phyloAndTransTree$tip.label, function(x) list(name = x, time = timestampsInDays[[x]], region = regionStamps[[x]]))
@@ -347,6 +347,7 @@ computeLogSum <- function(logValues) {
   for (i in seq_along(phyloAndTransTree$edge.length)) {
     phyloAndTransTree$edge.length[[i]]$logXi <- logXi[[i]]
   }
+  phyloAndTransTree <- .incrementPhyloStructOnly(phyloAndTransTree)
   phyloAndTransTree <- .identifyNodeRegions(phyloAndTransTree)
   # Initialises transmission tree branch lengths conditional on phylogenetic branch lengths and an equal clock rate across branches
   subtreeRootNodes <- .computeSubtreeRootNums(phyloAndTransTree)
@@ -365,12 +366,14 @@ computeLogSum <- function(logValues) {
       }
     }
   }
+  phyloAndTransTree <- .incrementPhyloRegionInfo(phyloAndTransTree, clusterRegion = targetRegion)
   phyloAndTransTree$LambdaList <- lapply(seq_along(subtreeRootNodes), function(i) list(Lambda = NULL, rootNodeNum = subtreeRootNodes[[i]]))
   coalRates <- sapply(seq_along(phyloAndTransTree$LambdaList), .computeCoalRateSubtree, phyloAndTransTree = phyloAndTransTree)
 
   for (i in seq_along(coalRates)) {
     phyloAndTransTree$LambdaList[[i]]$Lambda <- coalRates[[i]]
   }
+
   phyloAndTransTree
 }
 
@@ -465,10 +468,9 @@ computeLogSum <- function(logValues) {
   containerMatrix
 }
 
-.incrementPhylo <- function(phylogeny, clusterRegion) {
+.incrementPhyloStructOnly <- function(phylogeny) {
   if ("error" %in% class(phylogeny)) return(list(error = phylogeny)) # Returning a list will allow it to be incremented
   phyloCopy <- phylogeny
-  numTips <- length(phylogeny$tip.label)
   branchMatchParentMatrix <- sapply(1:(nrow(phyloCopy$edge) + 1), function(vertexNum) {
     branchMatch <- match(vertexNum, phyloCopy$edge[ , 2])
     parentNum <- phyloCopy$edge[branchMatch, 1]
@@ -479,15 +481,20 @@ computeLogSum <- function(logValues) {
   })
   childrenList <- vector(mode = "list", length = length(phyloCopy$edge.length) + 1)
   childrenList[length(phyloCopy$tip.label):length(phyloCopy$edge.length) + 1] <- nodeChildrenList
-  phyloCopy$tipNumsInSubtree <- lapply(seq_along(phyloCopy$LambdaList), function(subtreeIndex) {
-    which(sapply(phyloCopy$tip.label, "[[", "subtreeIndex") == subtreeIndex)
-  })
-  phyloCopy$subtreeIndexVec <- c(sapply(phyloCopy$tip.label, "[[", "subtreeIndex"), sapply(phyloCopy$node.label, "[[", "subtreeIndex"))
-  phyloCopy$vertexRegionVec <- c(sapply(phyloCopy$tip.label, "[[", "region"), sapply(phyloCopy$node.label, "[[", "region"))
   phyloCopy$tipNamesVec <- sapply(phyloCopy$tip.label, "[[", "name")
-  allDescList <- phangorn::Descendants(x = phyloCopy, node = 1:(length(phyloCopy$edge.length) + 1), type = "tips")
+  phyloCopy$descendedTips <- phangorn::Descendants(x = phyloCopy, node = 1:(length(phyloCopy$edge.length) + 1), type = "tips")
+  phyloCopy$vertexOrderByDepth <- .getVertexOrderByDepth(phyloCopy)
+  phyloCopy$branchMatchIndex <- branchMatchParentMatrix[1, ]
+  phyloCopy$parentNumVec <- branchMatchParentMatrix[2, ]
+  phyloCopy$childrenNumList <- childrenList
+  phyloCopy
+}
+
+.incrementPhyloRegionInfo <- function(phylogeny, clusterRegion) {
+  phyloCopy <- phylogeny
+  numTips <- length(phylogeny$tip.label)
   funForDescTips <- function(nodeNumber) {
-    allDesc <- allDescList[[nodeNumber]]
+    allDesc <- phyloCopy$descendedTips[[nodeNumber]]
     if (nodeNumber > length(phyloCopy$tip.label)) {
       nodeSubtree <- phyloCopy$node.label[[nodeNumber - numTips]]$subtreeIndex
       tipRegions <- sapply(allDesc, function(tipNumber) phyloCopy$tip.label[[tipNumber]]$region)
@@ -499,10 +506,11 @@ computeLogSum <- function(logValues) {
     output
   }
   phyloCopy$descendedTips <- lapply(1:(length(phyloCopy$edge.length) + 1), FUN = funForDescTips)
-  phyloCopy$vertexOrderByDepth <- .getVertexOrderByDepth(phyloCopy)
-  phyloCopy$branchMatchIndex <- branchMatchParentMatrix[1, ]
-  phyloCopy$parentNumVec <- branchMatchParentMatrix[2, ]
-  phyloCopy$childrenNumList <- childrenList
+  phyloCopy$tipNumsInSubtree <- lapply(seq_along(phyloCopy$LambdaList), function(subtreeIndex) {
+    which(sapply(phyloCopy$tip.label, "[[", "subtreeIndex") == subtreeIndex)
+  })
+  phyloCopy$subtreeIndexVec <- c(sapply(phyloCopy$tip.label, "[[", "subtreeIndex"), sapply(phyloCopy$node.label, "[[", "subtreeIndex"))
+  phyloCopy$vertexRegionVec <- c(sapply(phyloCopy$tip.label, "[[", "region"), sapply(phyloCopy$node.label, "[[", "region"))
 
   tipRegions <- sapply(phyloCopy$tip.label, "[[", "region")
   tipRegionsCheck <- tipRegions == clusterRegion

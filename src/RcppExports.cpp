@@ -7,8 +7,8 @@
 using namespace Rcpp;
 
 // getMRCAclustersRcpp
-std::unordered_map<std::string, uint> getMRCAclustersRcpp(IntegerVector& parentNumVec, List& childrenNumList, List& descendedTipsList, IntegerVector& subtreeIndexVec, StringVector& vertexRegionVec, StringVector& tipNamesVec, uint& subtreeRootNum, NumericMatrix& distTipsAncestorsMatrix, int subtreeIndex, int numTips, std::string regionLabel, int distLimit);
-RcppExport SEXP _CovidCluster_getMRCAclustersRcpp(SEXP parentNumVecSEXP, SEXP childrenNumListSEXP, SEXP descendedTipsListSEXP, SEXP subtreeIndexVecSEXP, SEXP vertexRegionVecSEXP, SEXP tipNamesVecSEXP, SEXP subtreeRootNumSEXP, SEXP distTipsAncestorsMatrixSEXP, SEXP subtreeIndexSEXP, SEXP numTipsSEXP, SEXP regionLabelSEXP, SEXP distLimitSEXP) {
+std::unordered_map<std::string, uint> getMRCAclustersRcpp(IntegerVector& parentNumVec, List& childrenNumList, List& descendedTipsList, IntegerVector& subtreeIndexVec, StringVector& vertexRegionVec, StringVector& tipNamesVec, uint& subtreeRootNum, NumericMatrix& distTipsAncestorsMatrix, int subtreeIndex, int numTips, std::string regionLabel, int distLimit, bool printDetails);
+RcppExport SEXP _CovidCluster_getMRCAclustersRcpp(SEXP parentNumVecSEXP, SEXP childrenNumListSEXP, SEXP descendedTipsListSEXP, SEXP subtreeIndexVecSEXP, SEXP vertexRegionVecSEXP, SEXP tipNamesVecSEXP, SEXP subtreeRootNumSEXP, SEXP distTipsAncestorsMatrixSEXP, SEXP subtreeIndexSEXP, SEXP numTipsSEXP, SEXP regionLabelSEXP, SEXP distLimitSEXP, SEXP printDetailsSEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
@@ -24,7 +24,8 @@ BEGIN_RCPP
     Rcpp::traits::input_parameter< int >::type numTips(numTipsSEXP);
     Rcpp::traits::input_parameter< std::string >::type regionLabel(regionLabelSEXP);
     Rcpp::traits::input_parameter< int >::type distLimit(distLimitSEXP);
-    rcpp_result_gen = Rcpp::wrap(getMRCAclustersRcpp(parentNumVec, childrenNumList, descendedTipsList, subtreeIndexVec, vertexRegionVec, tipNamesVec, subtreeRootNum, distTipsAncestorsMatrix, subtreeIndex, numTips, regionLabel, distLimit));
+    Rcpp::traits::input_parameter< bool >::type printDetails(printDetailsSEXP);
+    rcpp_result_gen = Rcpp::wrap(getMRCAclustersRcpp(parentNumVec, childrenNumList, descendedTipsList, subtreeIndexVec, vertexRegionVec, tipNamesVec, subtreeRootNum, distTipsAncestorsMatrix, subtreeIndex, numTips, regionLabel, distLimit, printDetails));
     return rcpp_result_gen;
 END_RCPP
 }
@@ -71,7 +72,7 @@ END_RCPP
 }
 
 static const R_CallMethodDef CallEntries[] = {
-    {"_CovidCluster_getMRCAclustersRcpp", (DL_FUNC) &_CovidCluster_getMRCAclustersRcpp, 12},
+    {"_CovidCluster_getMRCAclustersRcpp", (DL_FUNC) &_CovidCluster_getMRCAclustersRcpp, 13},
     {"_CovidCluster_simulateNodeTimesRcpp", (DL_FUNC) &_CovidCluster_simulateNodeTimesRcpp, 9},
     {"_CovidCluster_getSumMatRcpp", (DL_FUNC) &_CovidCluster_getSumMatRcpp, 1},
     {"_CovidCluster_summariseClusSizeDistsRcpp", (DL_FUNC) &_CovidCluster_summariseClusSizeDistsRcpp, 1},

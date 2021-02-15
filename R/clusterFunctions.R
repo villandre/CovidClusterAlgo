@@ -40,56 +40,53 @@ phylo <- function(edge, edge.length, tip.label, node.label = NULL) {
   return(.getNodeLabel(phylogeny, vertexNum))
 }
 
-.identifyNodeRegions <- function(transmissionTree) {
-  numTips <- ape::Ntip(transmissionTree)
-  nodeDepths <- sapply(1:(nrow(transmissionTree$edge) + 1), function(vertexNum) {
-    length(phangorn::Ancestors(transmissionTree, vertexNum, "all"))
-  })
+.identifyNodeRegions <- function(phyloAndTransTree) {
+  numTips <- length(phyloAndTransTree$tip.label)
   # We first perform a bottom-up sweep of the tree.
-  treeVertexNums <- seq(1, nrow(transmissionTree$edge) + 1)[order(nodeDepths, decreasing = TRUE)]
+  treeVertexNums <- rev(phyloAndTransTree$vertexOrderByDepth)
   for (vertexNum in head(treeVertexNums, -1)) { # We exclude the root node.
-    parentNum <- transmissionTree$edge[match(vertexNum, transmissionTree$edge[ , 2]) , 1]
+    parentNum <- phyloAndTransTree$parentNumVec[[vertexNum]]
     currentRegion <- NA
     if (vertexNum <= numTips) {
-      currentRegion <- transmissionTree$tip.label[[vertexNum]]$region
+      currentRegion <- phyloAndTransTree$tip.label[[vertexNum]]$region
     } else {
-      currentRegion <- transmissionTree$node.label[[vertexNum - numTips]]$region
+      currentRegion <- phyloAndTransTree$node.label[[vertexNum - numTips]]$region
     }
-    parentRegion <- transmissionTree$node.label[[parentNum - numTips]]$region
+    parentRegion <- phyloAndTransTree$node.label[[parentNum - numTips]]$region
     if (is.na(parentRegion[[1]])) {
-      transmissionTree$node.label[[parentNum - numTips]]$region <- currentRegion
+      phyloAndTransTree$node.label[[parentNum - numTips]]$region <- currentRegion
     } else {
       regionIntersection <- intersect(currentRegion, parentRegion)
       if (length(regionIntersection) > 0) {
-        transmissionTree$node.label[[parentNum - numTips]]$region <- regionIntersection
+        phyloAndTransTree$node.label[[parentNum - numTips]]$region <- regionIntersection
       } else {
-        transmissionTree$node.label[[parentNum - numTips]]$region <- c(currentRegion, parentRegion) # The union of regions.
+        phyloAndTransTree$node.label[[parentNum - numTips]]$region <- c(currentRegion, parentRegion) # The union of regions.
       }
     }
   }
 
   # We now perform a top-down sweep to resolve ambiguities.
-  treeVertexNumsTD <- seq(1, nrow(transmissionTree$edge) + 1)[order(nodeDepths, decreasing = FALSE)]
-  for (vertexNum in treeVertexNumsTD) {
+
+  for (vertexNum in phyloAndTransTree$vertexOrderByDepth) {
     if (vertexNum <= numTips) next # Tips are already resolved
-    regionSelected <- currentRegion <- transmissionTree$node.label[[vertexNum - numTips]]$region
+    regionSelected <- currentRegion <- phyloAndTransTree$node.label[[vertexNum - numTips]]$region
     if (length(currentRegion) > 1) {
       regionSelected <- sample(currentRegion, size = 1)
-      transmissionTree$node.label[[vertexNum - numTips]]$region <- regionSelected
+      phyloAndTransTree$node.label[[vertexNum - numTips]]$region <- regionSelected
     }
-    nodeChildren <- transmissionTree$edge[match(vertexNum, transmissionTree$edge[ , 1]) , 2]
+    nodeChildren <- phyloAndTransTree$childrenNumList[[vertexNum]]
     nodeChildren <- nodeChildren[nodeChildren > numTips] # Tips are already resolved
     for (child in nodeChildren) { # Is supposed to work even if nodeChildren is empty
-      childRegion <- transmissionTree$node.label[[child - numTips]]$region
+      childRegion <- phyloAndTransTree$node.label[[child - numTips]]$region
       if (length(childRegion) > 1) { # Child is unresolved
         regionIntersect <- intersect(regionSelected, childRegion)
         if (length(regionIntersect) > 0) {
-          transmissionTree$node.label[[child - numTips]]$region <- regionSelected
+          phyloAndTransTree$node.label[[child - numTips]]$region <- regionSelected
         }
       }
     }
   }
-  transmissionTree
+  phyloAndTransTree
 }
 
 .clearNodeRegions <- function(phyloAndTransTree) {
