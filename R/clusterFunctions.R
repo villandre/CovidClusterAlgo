@@ -233,9 +233,9 @@ phylo <- function(edge, edge.length, tip.label, node.label = NULL) {
   sum(logContributions)
 }
 
-.nodeTimesSubtreeLogPriorFun <- function(phyloAndTransTree, subtreeIndex, estRootTime, control) {
-  numTips <- length(phyloAndTransTree$tip.label)
-  Lambda <- phyloAndTransTree$LambdaList[[subtreeIndex]]$Lambda
+# .nodeTimesSubtreeLogPriorFun <- function(phyloAndTransTree, subtreeIndex, estRootTime, control) {
+#   numTips <- length(phyloAndTransTree$tip.label)
+#   Lambda <- phyloAndTransTree$LambdaList[[subtreeIndex]]$Lambda
 
   # getTipTimesList <- function(nodeNum) {
   #   # childrenNums <- phyloAndTransTree$edge[which(nodeNum == phyloAndTransTree$edge[ , 1]), 2]
@@ -258,20 +258,20 @@ phylo <- function(edge, edge.length, tip.label, node.label = NULL) {
   # }
   # tipTimesList <- lapply(nodesInSubtreeNums, getTipTimesList) # The function identifies tips of the *subtree* without having to break up the complete tree into separate components. In this case, a tip either corresponds to a tip in the complete tree, or to an internal node belonging to another subtree supported by a parent that belongs to the subtree numbered subtreeIndex, which represents an introduction of the virus into a new region.
   # tipTimes <- do.call("c", tipTimesList)
-  tipTimes <- sapply(phyloAndTransTree$tipNumbersBySubtree[[subtreeIndex]], function(vertexNum) {
-    returnValue <- NULL
-    if (vertexNum <= numTips) {
-      returnValue <- phyloAndTransTree$tip.label[[vertexNum]]$time
-    } else {
-      returnValue <- phyloAndTransTree$node.label[[vertexNum - numTips]]$time
-    }
-    returnValue
-  })
-  nodeTimes <- sapply(phyloAndTransTree$nodesInSubtreeNums[[subtreeIndex]], function(x) phyloAndTransTree$node.label[[x - numTips]]$time)
-  nodeOrTip <- rep(c("node", "tip"), c(length(nodeTimes), length(tipTimes)))
-  timesToConsider <- c(nodeTimes, tipTimes)
-  .funForLambdaOptim(logLambda = log(Lambda), times = timesToConsider, nodeOrTip = nodeOrTip)
-}
+#   tipTimes <- sapply(phyloAndTransTree$tipNumbersBySubtree[[subtreeIndex]], function(vertexNum) {
+#     returnValue <- NULL
+#     if (vertexNum <= numTips) {
+#       returnValue <- phyloAndTransTree$tip.label[[vertexNum]]$time
+#     } else {
+#       returnValue <- phyloAndTransTree$node.label[[vertexNum - numTips]]$time
+#     }
+#     returnValue
+#   })
+#   nodeTimes <- sapply(phyloAndTransTree$nodesInSubtreeNums[[subtreeIndex]], function(x) phyloAndTransTree$node.label[[x - numTips]]$time)
+#   nodeOrTip <- rep(c("node", "tip"), c(length(nodeTimes), length(tipTimes)))
+#   timesToConsider <- c(nodeTimes, tipTimes)
+#   .funForLambdaOptim(logLambda = log(Lambda), times = timesToConsider, nodeOrTip = nodeOrTip)
+# }
 
 plotTransmissionTree <- function(dualPhyloAndTransmissionTree, targetRegion = NULL, plotTipLabels = FALSE, plotTitle = NULL, showLabelTime = FALSE, showLabelRegion = FALSE, device = jpeg, filename, argsForDevice = list(), argsForPlotPhylo = NULL, showLegend = TRUE) {
   if (!requireNamespace("ggtree")) {
@@ -822,80 +822,6 @@ dpareto <- function(x, alpha, xm, log = TRUE) {
   collapsedTree <- ape::di2multi(phylogeny, tol = threshold)
   collapsedTree$edge.length <- lapply(collapsedTree$edge.length, function(edgeLength) list(phylogeny = edgeLength))
   .addTransTreeEdgeLengths(collapsedTree)
-}
-
-# For a NNI move to be possible with respect to the transmission tree, the sibling of the child node of the internal branch selected for the move be assigned a time point which is higher (lower in the tree).
-# Function does not allow a move that would allow a multifurcating split to have both tips and nodes as children.
-# Function only allows transitions within subtrees.
-
-.rNNItransTree <- function(phyloAndTransTree, moves = 1, subtreeIndex = NULL, control) {
-  if (is.null(subtreeIndex)) {
-    nodesInSubtrees <- table(sapply(phyloAndTransTree$node.label, "[[", "subtreeIndex"))
-    sampleProbs <- (nodesInSubtrees - 1)/sum(nodesInSubtrees - 1)
-    subtreeIndex <- sample(seq_along(nodesInSubtrees), prob = sampleProbs, size = 1)
-  }
-  nodesInSubtreeNums <- which(sapply(phyloAndTransTree$node.label, "[[", "subtreeIndex") == subtreeIndex) + length(phyloAndTransTree$tip.label)
-  if (length(nodesInSubtreeNums) < 2) return(phyloAndTransTree) # No NNI move within the subtree if it's a transmission pair or a singleton.
-
-  parentNums <- phyloAndTransTree$edge[match(nodesInSubtreeNums, phyloAndTransTree$edge[ , 2]), 1]  # The subtree root numbers will produce a FALSE.
-  parentRegions <- sapply(parentNums, function(nodeNum) phyloAndTransTree$node.label[[nodeNum - length(phyloAndTransTree$tip.label)]]$region)
-  currentRegions <- sapply(nodesInSubtreeNums, function(nodeNum) phyloAndTransTree$node.label[[nodeNum - length(phyloAndTransTree$tip.label)]]$region)
-  parentInSubtree <- parentRegions == currentRegions
-  nodesToSampleFrom <- nodesInSubtreeNums[parentInSubtree]
-  childNodesToTry <- nodesToSampleFrom
-  if (length(childNodesToTry) > 1)
-    childNodesToTry <- sample(nodesToSampleFrom, size = length(nodesToSampleFrom))
-  # It is possible that several subtrees will not allow permit a NNI move, due to tip time constraints.
-  index <- 1
-  while (index <= length(childNodesToTry)) {
-    childNum <- childNodesToTry[[index]]
-    if (control$MCMC.control$topologyTransition) {
-      grandchildrenNums <- phyloAndTransTree$edge[which(childNum == phyloAndTransTree$edge[ , 1]), 2]
-    } else {
-      grandchildrenNums <- phyloAndTransTree$childrenList[[childNum - length(phyloAndTransTree$tip.label)]]
-    }
-    if (length(grandchildrenNums) > 2) { # We can't allow a transition that would create a multifurcation that would include both tips and an internal node. childNum must be for an internal node.
-      index <- index + 1
-      next
-    }
-    nodeTime <- phyloAndTransTree$node.label[[childNum - ape::Ntip(phyloAndTransTree)]]$time
-    nodeSiblings <- phangorn::Siblings(phyloAndTransTree, childNum)
-    nodeSiblingsTryOrder <- nodeSiblings
-    if (length(nodeSiblingsTryOrder) > 1) {
-      nodeSiblingsTryOrder <- sample(nodeSiblings, size = length(nodeSiblings)) # 'sample' is called in case we have a multifurcation
-    }
-
-    for (siblingIndex in seq_along(nodeSiblingsTryOrder)) {
-      nodeSibling <- nodeSiblingsTryOrder[[siblingIndex]]
-      siblingTime <- .getVertexLabel(phyloAndTransTree, nodeSibling)$time
-      if ((siblingTime > nodeTime)) break
-    }
-    if ((siblingTime > nodeTime)) break
-    index <- index + 1
-  }
-  treeToReturn <- phyloAndTransTree
-  if (index > length(childNodesToTry)) {
-    warning("Could not find a suitable NNI move for the transmission tree! \n")
-    return(phyloAndTransTree)
-  } else {
-    siblingEdgeNum <- match(nodeSibling, phyloAndTransTree$edge[ , 2])
-    grandChildrenEdgeNums <- which(phyloAndTransTree$edge[ , 1] == childNum)
-    edgeNumForInterchange <- sample(grandChildrenEdgeNums, size = 1)
-    treeToReturn$edge[c(siblingEdgeNum, edgeNumForInterchange), 2] <- treeToReturn$edge[c(edgeNumForInterchange, siblingEdgeNum), 2]
-    # edge.length gives supporting branch lengths for nodes listed in the second column of edge. It follows that exchanging two elements in that column must result in a similar exchange of the elements of edge.length.
-    treeToReturn$edge.length[c(siblingEdgeNum, edgeNumForInterchange)] <- treeToReturn$edge.length[c(edgeNumForInterchange, siblingEdgeNum)]
-  }
-  treeToReturn <- .updateTransTreeEdgeLengths(treeToReturn)
-
-  inconsistencyTests <- sapply(1:(ape::Nnode(treeToReturn) - 1) + ape::Ntip(treeToReturn) + 1, function(x) {
-    currentTime <- .getVertexLabel(treeToReturn, x)$time
-    parentTime <- .getVertexLabel(treeToReturn, phangorn::Ancestors(treeToReturn, x, "parent"))$time
-    parentTime >= currentTime
-  })
-  if (any(inconsistencyTests)) {
-    stop("Inconsistent time values in .rNNItransTree! \n")
-  }
-  treeToReturn
 }
 
 getTipTimes <- function(phyloAndTransTree) {

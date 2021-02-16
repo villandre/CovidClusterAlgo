@@ -369,8 +369,8 @@ computeLogSum <- function(logValues) {
   }
   phyloAndTransTree <- .incrementPhyloRegionInfo(phyloAndTransTree, clusterRegion = targetRegion)
   phyloAndTransTree$LambdaList <- lapply(seq_along(subtreeRootNodes), function(i) list(Lambda = NULL, rootNodeNum = subtreeRootNodes[[i]]))
-  coalRates <- sapply(seq_along(phyloAndTransTree$LambdaList), .computeCoalRateSubtree, phyloAndTransTree = phyloAndTransTree)
-
+  # coalRates <- sapply(seq_along(phyloAndTransTree$LambdaList), .computeCoalRateSubtree, phyloAndTransTree = phyloAndTransTree)
+  coalRates <- sapply(seq_along(phyloAndTransTree$LambdaList), .computeCoalRateSubtreeAlt, phyloAndTransTree = phyloAndTransTree)
   for (i in seq_along(coalRates)) {
     phyloAndTransTree$LambdaList[[i]]$Lambda <- coalRates[[i]]
   }
@@ -387,7 +387,7 @@ computeLogSum <- function(logValues) {
   for (nodeNum in orderedNodes) {
     childrenNums <- NULL
     childrenNums <- phyloAndTransTree$childrenNumList[[nodeNum]]
-    # childrenNums <- phyloAndTransTree$edge[which(phyloAndTransTree$edge[ , 1] == nodeNum), 2]
+
     introForMerge <- phyloAndTransTree$node.label[[nodeNum - length(phyloAndTransTree$tip.label)]]$subtreeIndex
     minChildrenTimes <- min(sapply(childrenNums, function(childNum) {
       returnTime <- NULL
@@ -402,6 +402,39 @@ computeLogSum <- function(logValues) {
   }
   phyloAndTransTree <- .addTransTreeEdgeLengths(phyloAndTransTree)
   phyloAndTransTree
+}
+
+.computeCoalRateSubtreeAlt <- function(phyloAndTransTree, subtreeIndex, control) {
+  numTips <- length(phyloAndTransTree$tip.label)
+  subtreeRootNum <- phyloAndTransTree$LambdaList[[subtreeIndex]]$rootNodeNum
+  nodeIndicesInSubtree <- which(sapply(phyloAndTransTree$node.label, "[[", "subtreeIndex") == subtreeIndex) + numTips
+
+  vertexTimes <- numeric(length(phyloAndTransTree$edge.length) + 1)
+  vertexTimes[[subtreeRootNum]] <- 1e-200 # Just to distinguish it from unspecified values.
+  vertexInDepthOrder <- intersect(phyloAndTransTree$vertexOrderByDepth, nodeIndicesInSubtree)
+
+  for (vertexNum in vertexInDepthOrder) {
+    if (vertexNum <= numTips) next
+    childrenNums <- phyloAndTransTree$childrenNumList[[vertexNum]]
+    currentTime <- vertexTimes[[vertexNum]]
+    childrenTimes <- currentTime + sapply(phyloAndTransTree$edge.length[phyloAndTransTree$branchMatchIndex[childrenNums]], "[[", "phylogeny")/exp(sapply(phyloAndTransTree$edge.length[phyloAndTransTree$branchMatchIndex[childrenNums]], "[[", "logXi"))
+    vertexTimes[childrenNums] <- childrenTimes
+  }
+  verticesInTree <- which(vertexTimes > 0)
+  vertexTimesToKeep <- vertexTimes[verticesInTree]
+  subtreeTips <- setdiff(verticesInTree, nodeIndicesInSubtree)
+  nodeOrder <- order(vertexTimesToKeep, decreasing = T)
+  vertexTimesToKeepOrdered <- vertexTimesToKeep[nodeOrder]
+  verticesInTreeOrdered <- verticesInTree[nodeOrder]
+  incrementValues <- sapply(verticesInTreeOrdered, function(vertexNum) {
+    if (vertexNum %in% subtreeTips) return(1)
+    -length(phyloAndTransTree$childrenNumList[[vertexNum]])
+  })
+  timeIntervals <- abs(diff(vertexTimesToKeepOrdered))
+
+  numLineages <- head(cumsum(incrementValues), n = -1)
+  numPairs <- choose(numLineages, 2)
+  sum(incrementValues < 0)/sum(numPairs * timeIntervals)
 }
 
 .computeCoalRateSubtree <- function(phyloAndTransTree, subtreeIndex) {
@@ -419,8 +452,8 @@ computeLogSum <- function(logValues) {
     childrenNums <- phyloAndTransTree$childrenNumList[[vertexNum]]
     matchingBranchNums <- phyloAndTransTree$branchMatchIndex[childrenNums]
     if (is.null(childrenNums)) { # We're initialising, so both childrenNums and matchingBranchNums will be NULL...
-      childrenNums <- phangorn::Children(phyloAndTransTree, vertexNum)
-      matchingBranchNums <- match(childrenNums, phyloAndTransTreeCopy$edge[ , 2])
+      childrenNums <- phyloAndTransTree$childrenNumList[[vertexNum]]
+      matchingBranchNums <- phyloAndTransTree$branchMatchIndex[childrenNums]
     }
 
     transTreeBranchLengths <- sapply(matchingBranchNums, function(edgeNum) phyloAndTransTreeCopy$edge.length[[edgeNum]]$phylogeny/exp(phyloAndTransTreeCopy$edge.length[[edgeNum]]$logXi))
@@ -433,7 +466,7 @@ computeLogSum <- function(logValues) {
     }
     childrenRegions <- sapply(childrenNums, function(childNum) .getVertexLabel(phyloAndTransTreeCopy, childNum)$region)
     addChildToReviewVec <- (childrenRegions == subtreeRegion) & (childrenNums > ape::Ntip(phyloAndTransTreeCopy))
-    childrenStatus <- ifelse(addChildToReviewVec, "node", "tip") # A child in region y whose parent is in region x is the root of another subtree, and will be classified as such. At the same time, that child corresponds to a tip in the supporting tree. A tip is a tip, notwithstanding the region it belongs to. This will affect the computation of the prior mean.
+    childrenStatus <- ifelse(addChildToReviewVec, "node", "tip") # A child in region y whose parent is in region x is the root of another subtree, and will be classified as such. At the same time, that child corresponds to a tip in the supporting tree. A tip is a tip, notwithstanding the region it belongs to.
     nodeOrTip <- c(nodeOrTip, childrenStatus)
     verticesToReview <- c(verticesToReview, childrenNums[addChildToReviewVec])
     index <- index + 1
@@ -507,9 +540,9 @@ computeLogSum <- function(logValues) {
     output
   }
   phyloCopy$descendedTips <- lapply(1:(length(phyloCopy$edge.length) + 1), FUN = funForDescTips)
-  phyloCopy$tipNumsInSubtree <- lapply(seq_along(phyloCopy$LambdaList), function(subtreeIndex) {
-    which(sapply(phyloCopy$tip.label, "[[", "subtreeIndex") == subtreeIndex)
-  })
+  # phyloCopy$tipNumsInSubtree <- lapply(seq_along(phyloCopy$LambdaList), function(subtreeIndex) {
+  #   which(sapply(phyloCopy$tip.label, "[[", "subtreeIndex") == subtreeIndex)
+  # })
   phyloCopy$subtreeIndexVec <- c(sapply(phyloCopy$tip.label, "[[", "subtreeIndex"), sapply(phyloCopy$node.label, "[[", "subtreeIndex"))
   phyloCopy$vertexRegionVec <- c(sapply(phyloCopy$tip.label, "[[", "region"), sapply(phyloCopy$node.label, "[[", "region"))
 
@@ -523,30 +556,30 @@ computeLogSum <- function(logValues) {
 
   # This identifies the "tip" numbers for each subtree. An internal node may be a tip for a given subtree.
   numTips <- length(phyloCopy$tip.label)
-  getTipNumbersBySubtree <- function(subtreeIndex) {
-    startNode <- phyloCopy$LambdaList[[subtreeIndex]]$rootNodeNum
-    nodeNumsForSubtree <- numeric(0)
-    nodesToCheck <- startNode
-    repeat {
-      nodeNum <- nodesToCheck[[1]]
-      nodesToCheck <- nodesToCheck[-1]
-      childrenNum <- phyloCopy$childrenNumList[[nodeNum]]
-      nodeNumsToAddTest <- sapply(childrenNum, function(childNum) {
-        childSubtree <- NULL
-        if (childNum <= numTips) {
-          childSubtree <- phyloCopy$tip.label[[childNum]]$subtreeIndex
-        } else {
-          childSubtree <- phyloCopy$node.label[[childNum - numTips]]$subtreeIndex
-        }
-        (childNum > numTips) & (childSubtree == subtreeIndex)
-      })
-      nodesToCheck <- c(nodesToCheck, childrenNum[nodeNumsToAddTest])
-      nodeNumsForSubtree <- c(nodeNumsForSubtree, childrenNum[!nodeNumsToAddTest])
-      if (length(nodesToCheck) == 0) break
-    }
-    nodeNumsForSubtree
-  }
-  phyloCopy$tipNumbersBySubtree <- lapply(seq_along(phyloCopy$LambdaList), getTipNumbersBySubtree) # The function identifies tips of the *subtree* without having to break up the complete tree into separate components. In this case, a tip either corresponds to a tip in the complete tree, or to an internal node belonging to another subtree supported by a parent that belongs to the subtree numbered subtreeIndex, which represents an introduction of the virus into a new region.
+  # getTipNumbersBySubtree <- function(subtreeIndex) {
+  #   startNode <- phyloCopy$LambdaList[[subtreeIndex]]$rootNodeNum
+  #   nodeNumsForSubtree <- numeric(0)
+  #   nodesToCheck <- startNode
+  #   repeat {
+  #     nodeNum <- nodesToCheck[[1]]
+  #     nodesToCheck <- nodesToCheck[-1]
+  #     childrenNum <- phyloCopy$childrenNumList[[nodeNum]]
+  #     nodeNumsToAddTest <- sapply(childrenNum, function(childNum) {
+  #       childSubtree <- NULL
+  #       if (childNum <= numTips) {
+  #         childSubtree <- phyloCopy$tip.label[[childNum]]$subtreeIndex
+  #       } else {
+  #         childSubtree <- phyloCopy$node.label[[childNum - numTips]]$subtreeIndex
+  #       }
+  #       (childNum > numTips) & (childSubtree == subtreeIndex)
+  #     })
+  #     nodesToCheck <- c(nodesToCheck, childrenNum[nodeNumsToAddTest])
+  #     nodeNumsForSubtree <- c(nodeNumsForSubtree, childrenNum[!nodeNumsToAddTest])
+  #     if (length(nodesToCheck) == 0) break
+  #   }
+  #   nodeNumsForSubtree
+  # }
+  # phyloCopy$tipNumbersBySubtree <- lapply(seq_along(phyloCopy$LambdaList), getTipNumbersBySubtree) # The function identifies tips of the *subtree* without having to break up the complete tree into separate components. In this case, a tip either corresponds to a tip in the complete tree, or to an internal node belonging to another subtree supported by a parent that belongs to the subtree numbered subtreeIndex, which represents an introduction of the virus into a new region.
   phyloCopy$nodesInSubtreeNums <- lapply(seq_along(phyloCopy$LambdaList), function(subtreeIndex) {
     which(sapply(phyloCopy$node.label, "[[", "subtreeIndex") == subtreeIndex) + numTips
   })
