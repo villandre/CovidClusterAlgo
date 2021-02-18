@@ -88,12 +88,13 @@ covidCluster <- function(
   numItersToDrop <- ceiling(MrBayes.control$burninfrac * length(treeSample))
   itersToKeep <- seq(from = numItersToDrop + 1, to = length(treeSample), by = ceiling(1/control$MrBayesOutputThinningRate))
   treeSample <- treeSample[itersToKeep]
+  treeSampleList <- lapply(seq_along(treeSample), function(index) treeSample[[index]])
   # We also read in associated parameter values...
 
   # parameterValuesFile <- paste(MrBayesOutputFilenamePrefix, ".p", sep = "")
   # parameterValues <- .formatParameterFiles(parameterValuesFile, itersToKeep = itersToKeep, control = MrBayes.control)
 
-  clusMembershipVecList <- .simulateClusMembership(phyloList = treeSample, targetRegion = clusterRegion, rootRegion = rootRegion, timestamps = seqsTimestampsPOSIXct, regionStamps = seqsRegionStamps, clockRate = perSiteClockRate, covidCluster.control = control, priors.control = priors.control)
+  clusMembershipVecList <- .simulateClusMembership(phyloList = treeSampleList, targetRegion = clusterRegion, rootRegion = rootRegion, timestamps = seqsTimestampsPOSIXct, regionStamps = seqsRegionStamps, clockRate = perSiteClockRate, covidCluster.control = control, priors.control = priors.control)
   output <- produceClusters(clusMembershipVecList, control = control)
   if (control$saveArgs) {
     output$args <- mget(names(formals()))
@@ -176,7 +177,6 @@ gen.priors.control <- function() {
   if (covidCluster.control$numThreads > 1) {
     cat("Simulating transmission trees... ")
     cl <- parallel::makePSOCKcluster(covidCluster.control$numThreads)
-    # clusMembershipCondOnPhylo <- parallel::parLapply(cl = cl, X = phyloList, fun = function(listElement) tryCatch(expr = .simulateClustersFromStartingTree(phylogeny = listElement, timestampsInDays = timestampsInDays, regionStamps = regionStamps, logClockRatePriorMean = log(clockRate), targetRegion = targetRegion, control = covidCluster.control), error = function(e) e))
     clusMembershipCondOnPhylo <- parallel::parLapply(cl = cl, X = phyloList, fun = .simulateClustersFromStartingTree, timestampsInDays = timestampsInDays, regionStamps = regionStamps, logClockRatePriorMean = log(clockRate), targetRegion = targetRegion, rootRegion = rootRegion, control = covidCluster.control)
     cat("Done \n")
     parallel::stopCluster(cl)
@@ -228,7 +228,9 @@ gen.priors.control <- function() {
 # subtreeClusterFun is a function that takes a phyloAndTransTree object and a region index and produces a vector of cluster membership indices.
 
 .simulateClustersFromStartingTree <- function(phylogeny,  timestampsInDays, regionStamps, logClockRatePriorMean, targetRegion, rootRegion, control) {
+
   phyloAndTransTree <- .genStartPhyloAndTransTree(phylogeny = phylogeny, timestampsInDays = timestampsInDays, regionStamps = regionStamps, logClockRatePriorMean = logClockRatePriorMean, targetRegion = targetRegion, rootRegion = rootRegion, control = control)
+
   funToReplicate <- function(phyloAndTransTree, control) {
     medianRates <- sapply(phyloAndTransTree$LambdaList, "[[", "Lambda")
     coalRates <- exp(rnorm(n = length(phyloAndTransTree$LambdaList), mean = log(medianRates), sd = control$logLambdaPriorSD))
@@ -241,6 +243,7 @@ gen.priors.control <- function() {
       numTips <- length(phyloAndTransTree$tip.label)
       orderedVertices <- rev(phyloAndTransTree$vertexOrderByDepth)
       tipTimes <- sapply(phyloAndTransTree$tip.label, "[[", "time")
+
       nodeTimesAndEdgeLengths <- simulateNodeTimesRcpp(
         numTips = as.integer(numTips),
         baseRatePerIntroduction = coalRates,
@@ -251,6 +254,7 @@ gen.priors.control <- function() {
         childrenNumList = phyloAndTransTree$childrenNumList,
         branchMatchIndexVec = phyloAndTransTree$branchMatchIndex,
         parentNumVec = phyloAndTransTree$parentNumVec)
+
       subtreeClusterFun <- function(phyloAndTransTree, subtreeIndex, distLimit, clusterRegion, clusteringCriterion, distTipsAncestorsMatrix) {
         numTips <- length(phyloAndTransTree$tip.label)
         tipsInSubtreeAndRegion <- phyloAndTransTree$tipsInRegionBySubtree[[subtreeIndex]]
@@ -262,6 +266,7 @@ gen.priors.control <- function() {
           if (control$clusterCriterion == "cophenetic") {
             clusterFunction <- getCopheneticClustersRcpp
           }
+
           output <- clusterFunction(
             parentNumVec = phyloAndTransTree$parentNumVec,
             childrenNumList = phyloAndTransTree$childrenNumList,
