@@ -89,6 +89,8 @@ covidCluster <- function(
   itersToKeep <- seq(from = numItersToDrop + 1, to = length(treeSample), by = ceiling(1/control$MrBayesOutputThinningRate))
   treeSample <- treeSample[itersToKeep]
   treeSampleList <- lapply(seq_along(treeSample), function(index) treeSample[[index]])
+  rm(treeSample)
+  gc() # Tree sample can be huge. Better to call gc explicitly
   # We also read in associated parameter values...
 
   # parameterValuesFile <- paste(MrBayesOutputFilenamePrefix, ".p", sep = "")
@@ -127,10 +129,13 @@ clusterFromMrBayesOutput <- function(seqsTimestampsPOSIXct, seqsRegionStamps, Mr
   numItersToDrop <- ceiling(burninFraction * length(treeSample))
   itersToKeep <- seq(from = numItersToDrop + 1, to = length(treeSample), by = ceiling(1/control$MrBayesOutputThinningRate))
   treeSample <- treeSample[itersToKeep]
+  treeSampleList <- lapply(seq_along(treeSample), function(index) treeSample[[index]])
+  rm(treeSample)
+  gc() # Tree sample can be huge. Better to call gc explicitly
 
   # parameterValues <- .formatParameterFiles(MrBayesParametersFilename, itersToKeep = itersToKeep)
 
-  clusMembershipVecList <- .simulateClusMembership(phyloList = treeSample, targetRegion = clusterRegion, rootRegion = rootRegion, timestamps = seqsTimestampsPOSIXct, regionStamps = seqsRegionStamps, clockRate = perSiteClockRate, covidCluster.control = control)
+  clusMembershipVecList <- .simulateClusMembership(phyloList = treeSampleList, targetRegion = clusterRegion, rootRegion = rootRegion, timestamps = seqsTimestampsPOSIXct, regionStamps = seqsRegionStamps, clockRate = perSiteClockRate, covidCluster.control = control)
   output <- produceClusters(clusMembershipVecList, control = control)
   output$introSizeFreqTables <- clusMembershipVecList$introSizeFreqTables
   output$clusSizeDist <- clusMembershipVecList$clusSizeDist
