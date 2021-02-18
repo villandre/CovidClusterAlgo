@@ -175,7 +175,7 @@ gen.priors.control <- function() {
 
   if (covidCluster.control$numThreads > 1) {
     cat("Simulating transmission trees... ")
-    cl <- parallel::makeForkCluster(covidCluster.control$numThreads)
+    cl <- parallel::makePSOCKcluster(covidCluster.control$numThreads)
     # clusMembershipCondOnPhylo <- parallel::parLapply(cl = cl, X = phyloList, fun = function(listElement) tryCatch(expr = .simulateClustersFromStartingTree(phylogeny = listElement, timestampsInDays = timestampsInDays, regionStamps = regionStamps, logClockRatePriorMean = log(clockRate), targetRegion = targetRegion, control = covidCluster.control), error = function(e) e))
     clusMembershipCondOnPhylo <- parallel::parLapply(cl = cl, X = phyloList, fun = .simulateClustersFromStartingTree, timestampsInDays = timestampsInDays, regionStamps = regionStamps, logClockRatePriorMean = log(clockRate), targetRegion = targetRegion, rootRegion = rootRegion, control = covidCluster.control)
     cat("Done \n")
@@ -236,15 +236,16 @@ gen.priors.control <- function() {
     for (i in seq_along(phyloAndTransTree$LambdaList)) {
       phyloAndTransTree$LambdaList[[i]]$Lambda <- coalRates[[i]]
     }
+    mode(phyloAndTransTree$edge) <- "integer"
     funToReplicateInner <- function(phyloAndTransTree, control) {
       numTips <- length(phyloAndTransTree$tip.label)
       orderedVertices <- rev(phyloAndTransTree$vertexOrderByDepth)
       tipTimes <- sapply(phyloAndTransTree$tip.label, "[[", "time")
       nodeTimesAndEdgeLengths <- simulateNodeTimesRcpp(
-        numTips = numTips,
+        numTips = as.integer(numTips),
         baseRatePerIntroduction = coalRates,
-        orderedVertices = orderedVertices,
-        subtreeIndexVec = phyloAndTransTree$subtreeIndexVec,
+        orderedVertices = as.integer(orderedVertices),
+        subtreeIndexVec = as.integer(phyloAndTransTree$subtreeIndexVec),
         tipTimes = tipTimes,
         edgeMatrix = phyloAndTransTree$edge,
         childrenNumList = phyloAndTransTree$childrenNumList,
@@ -511,15 +512,16 @@ computeLogSum <- function(logValues) {
     c(branchMatch, parentNum)
   })
   nodeChildrenList <- lapply(length(phyloCopy$tip.label):length(phyloCopy$edge.length) + 1, function(nodeNum) {
-    phyloCopy$edge[which(phyloCopy$edge[ , 1] == nodeNum), 2]
+    as.integer(phyloCopy$edge[which(phyloCopy$edge[ , 1] == nodeNum), 2])
   })
   childrenList <- vector(mode = "list", length = length(phyloCopy$edge.length) + 1)
   childrenList[length(phyloCopy$tip.label):length(phyloCopy$edge.length) + 1] <- nodeChildrenList
   phyloCopy$tipNamesVec <- sapply(phyloCopy$tip.label, "[[", "name")
   phyloCopy$descendedTips <- phangorn::Descendants(x = phyloCopy, node = 1:(length(phyloCopy$edge.length) + 1), type = "tips")
-  phyloCopy$vertexOrderByDepth <- .getVertexOrderByDepth(phyloCopy)
-  phyloCopy$branchMatchIndex <- branchMatchParentMatrix[1, ]
-  phyloCopy$parentNumVec <- branchMatchParentMatrix[2, ]
+  phyloCopy$descendedTips <- lapply(phyloCopy$descendedTips, "as.integer")
+  phyloCopy$vertexOrderByDepth <- as.integer(.getVertexOrderByDepth(phyloCopy))
+  phyloCopy$branchMatchIndex <- as.integer(branchMatchParentMatrix[1, ])
+  phyloCopy$parentNumVec <- as.integer(branchMatchParentMatrix[2, ])
   phyloCopy$childrenNumList <- childrenList
   phyloCopy
 }

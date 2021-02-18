@@ -7,19 +7,19 @@
 using namespace Rcpp;
 
 // getMRCAclustersRcpp
-std::unordered_map<std::string, uint> getMRCAclustersRcpp(IntegerVector& parentNumVec, List& childrenNumList, List& descendedTipsList, IntegerVector& subtreeIndexVec, StringVector& vertexRegionVec, StringVector& tipNamesVec, uint& subtreeRootNum, NumericMatrix& distTipsAncestorsMatrix, int subtreeIndex, int numTips, std::string regionLabel, int distLimit, bool printDetails);
+std::unordered_map<std::string, int> getMRCAclustersRcpp(const IntegerVector& parentNumVec, const List& childrenNumList, const List& descendedTipsList, const IntegerVector& subtreeIndexVec, const StringVector& vertexRegionVec, const StringVector& tipNamesVec, int subtreeRootNum, const NumericMatrix& distTipsAncestorsMatrix, int subtreeIndex, int numTips, std::string regionLabel, int distLimit, bool printDetails);
 RcppExport SEXP _CovidCluster_getMRCAclustersRcpp(SEXP parentNumVecSEXP, SEXP childrenNumListSEXP, SEXP descendedTipsListSEXP, SEXP subtreeIndexVecSEXP, SEXP vertexRegionVecSEXP, SEXP tipNamesVecSEXP, SEXP subtreeRootNumSEXP, SEXP distTipsAncestorsMatrixSEXP, SEXP subtreeIndexSEXP, SEXP numTipsSEXP, SEXP regionLabelSEXP, SEXP distLimitSEXP, SEXP printDetailsSEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
-    Rcpp::traits::input_parameter< IntegerVector& >::type parentNumVec(parentNumVecSEXP);
-    Rcpp::traits::input_parameter< List& >::type childrenNumList(childrenNumListSEXP);
-    Rcpp::traits::input_parameter< List& >::type descendedTipsList(descendedTipsListSEXP);
-    Rcpp::traits::input_parameter< IntegerVector& >::type subtreeIndexVec(subtreeIndexVecSEXP);
-    Rcpp::traits::input_parameter< StringVector& >::type vertexRegionVec(vertexRegionVecSEXP);
-    Rcpp::traits::input_parameter< StringVector& >::type tipNamesVec(tipNamesVecSEXP);
-    Rcpp::traits::input_parameter< uint& >::type subtreeRootNum(subtreeRootNumSEXP);
-    Rcpp::traits::input_parameter< NumericMatrix& >::type distTipsAncestorsMatrix(distTipsAncestorsMatrixSEXP);
+    Rcpp::traits::input_parameter< const IntegerVector& >::type parentNumVec(parentNumVecSEXP);
+    Rcpp::traits::input_parameter< const List& >::type childrenNumList(childrenNumListSEXP);
+    Rcpp::traits::input_parameter< const List& >::type descendedTipsList(descendedTipsListSEXP);
+    Rcpp::traits::input_parameter< const IntegerVector& >::type subtreeIndexVec(subtreeIndexVecSEXP);
+    Rcpp::traits::input_parameter< const StringVector& >::type vertexRegionVec(vertexRegionVecSEXP);
+    Rcpp::traits::input_parameter< const StringVector& >::type tipNamesVec(tipNamesVecSEXP);
+    Rcpp::traits::input_parameter< int >::type subtreeRootNum(subtreeRootNumSEXP);
+    Rcpp::traits::input_parameter< const NumericMatrix& >::type distTipsAncestorsMatrix(distTipsAncestorsMatrixSEXP);
     Rcpp::traits::input_parameter< int >::type subtreeIndex(subtreeIndexSEXP);
     Rcpp::traits::input_parameter< int >::type numTips(numTipsSEXP);
     Rcpp::traits::input_parameter< std::string >::type regionLabel(regionLabelSEXP);
@@ -30,42 +30,42 @@ BEGIN_RCPP
 END_RCPP
 }
 // simulateNodeTimesRcpp
-List simulateNodeTimesRcpp(uint numTips, NumericVector& baseRatePerIntroduction, IntegerVector& orderedVertices, IntegerVector& subtreeIndexVec, NumericVector& tipTimes, IntegerMatrix& edgeMatrix, List& childrenNumList, IntegerVector& branchMatchIndexVec, IntegerVector& parentNumVec);
+List simulateNodeTimesRcpp(int numTips, const NumericVector& baseRatePerIntroduction, const IntegerVector& orderedVertices, const IntegerVector& subtreeIndexVec, const NumericVector& tipTimes, const IntegerMatrix& edgeMatrix, const List& childrenNumList, const IntegerVector& branchMatchIndexVec, const IntegerVector& parentNumVec);
 RcppExport SEXP _CovidCluster_simulateNodeTimesRcpp(SEXP numTipsSEXP, SEXP baseRatePerIntroductionSEXP, SEXP orderedVerticesSEXP, SEXP subtreeIndexVecSEXP, SEXP tipTimesSEXP, SEXP edgeMatrixSEXP, SEXP childrenNumListSEXP, SEXP branchMatchIndexVecSEXP, SEXP parentNumVecSEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
-    Rcpp::traits::input_parameter< uint >::type numTips(numTipsSEXP);
-    Rcpp::traits::input_parameter< NumericVector& >::type baseRatePerIntroduction(baseRatePerIntroductionSEXP);
-    Rcpp::traits::input_parameter< IntegerVector& >::type orderedVertices(orderedVerticesSEXP);
-    Rcpp::traits::input_parameter< IntegerVector& >::type subtreeIndexVec(subtreeIndexVecSEXP);
-    Rcpp::traits::input_parameter< NumericVector& >::type tipTimes(tipTimesSEXP);
-    Rcpp::traits::input_parameter< IntegerMatrix& >::type edgeMatrix(edgeMatrixSEXP);
-    Rcpp::traits::input_parameter< List& >::type childrenNumList(childrenNumListSEXP);
-    Rcpp::traits::input_parameter< IntegerVector& >::type branchMatchIndexVec(branchMatchIndexVecSEXP);
-    Rcpp::traits::input_parameter< IntegerVector& >::type parentNumVec(parentNumVecSEXP);
+    Rcpp::traits::input_parameter< int >::type numTips(numTipsSEXP);
+    Rcpp::traits::input_parameter< const NumericVector& >::type baseRatePerIntroduction(baseRatePerIntroductionSEXP);
+    Rcpp::traits::input_parameter< const IntegerVector& >::type orderedVertices(orderedVerticesSEXP);
+    Rcpp::traits::input_parameter< const IntegerVector& >::type subtreeIndexVec(subtreeIndexVecSEXP);
+    Rcpp::traits::input_parameter< const NumericVector& >::type tipTimes(tipTimesSEXP);
+    Rcpp::traits::input_parameter< const IntegerMatrix& >::type edgeMatrix(edgeMatrixSEXP);
+    Rcpp::traits::input_parameter< const List& >::type childrenNumList(childrenNumListSEXP);
+    Rcpp::traits::input_parameter< const IntegerVector& >::type branchMatchIndexVec(branchMatchIndexVecSEXP);
+    Rcpp::traits::input_parameter< const IntegerVector& >::type parentNumVec(parentNumVecSEXP);
     rcpp_result_gen = Rcpp::wrap(simulateNodeTimesRcpp(numTips, baseRatePerIntroduction, orderedVertices, subtreeIndexVec, tipTimes, edgeMatrix, childrenNumList, branchMatchIndexVec, parentNumVec));
     return rcpp_result_gen;
 END_RCPP
 }
 // getSumMatRcpp
-arma::sp_umat getSumMatRcpp(List& clusMemVecList);
+arma::sp_imat getSumMatRcpp(const List& clusMemVecList);
 RcppExport SEXP _CovidCluster_getSumMatRcpp(SEXP clusMemVecListSEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
-    Rcpp::traits::input_parameter< List& >::type clusMemVecList(clusMemVecListSEXP);
+    Rcpp::traits::input_parameter< const List& >::type clusMemVecList(clusMemVecListSEXP);
     rcpp_result_gen = Rcpp::wrap(getSumMatRcpp(clusMemVecList));
     return rcpp_result_gen;
 END_RCPP
 }
 // summariseClusSizeDistsRcpp
-std::unordered_map<int, double> summariseClusSizeDistsRcpp(List& clusMemVecList);
+std::unordered_map<int, double> summariseClusSizeDistsRcpp(const List& clusMemVecList);
 RcppExport SEXP _CovidCluster_summariseClusSizeDistsRcpp(SEXP clusMemVecListSEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
-    Rcpp::traits::input_parameter< List& >::type clusMemVecList(clusMemVecListSEXP);
+    Rcpp::traits::input_parameter< const List& >::type clusMemVecList(clusMemVecListSEXP);
     rcpp_result_gen = Rcpp::wrap(summariseClusSizeDistsRcpp(clusMemVecList));
     return rcpp_result_gen;
 END_RCPP

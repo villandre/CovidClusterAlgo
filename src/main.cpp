@@ -18,17 +18,17 @@ using namespace Rcpp;
 //   http://gallery.rcpp.org/
 //
 
-arma::mat produceDistTipsAncestorsMatrixRcpp(uint numTips,
-                                       uint numNodes,
-                                       IntegerVector & branchMatchIndexVec,
-                                       std::vector<double> edgeLengthsVec,
-                                       IntegerVector & parentNumVec) {
-  uint branchMatchIndex = 0 ;
+arma::mat produceDistTipsAncestorsMatrixRcpp(int numTips,
+                                       int numNodes,
+                                       const IntegerVector & branchMatchIndexVec,
+                                       const std::vector<double> & edgeLengthsVec,
+                                       const IntegerVector & parentNumVec) {
+  int branchMatchIndex = 0 ;
   arma::mat containerMatrix(numTips, numNodes, arma::fill::zeros) ;
-  uint parentNum = 0 ;
+  int parentNum = 0 ;
 
   for (uint tipNum = 0; tipNum < numTips; tipNum++) {
-    uint currentPos = tipNum ;
+    int currentPos = tipNum ;
     double totalDist = 0 ;
     do {
       parentNum = parentNumVec.at(currentPos) - 1;
@@ -137,15 +137,15 @@ arma::mat produceDistTipsAncestorsMatrixRcpp(uint numTips,
 
 // [[Rcpp::export]]
 
-std::unordered_map<std::string, uint> getMRCAclustersRcpp(
-    IntegerVector & parentNumVec,
-    List & childrenNumList,
-    List & descendedTipsList,
-    IntegerVector & subtreeIndexVec,
-    StringVector & vertexRegionVec,
-    StringVector & tipNamesVec,
-    uint & subtreeRootNum,
-    NumericMatrix & distTipsAncestorsMatrix,
+std::unordered_map<std::string, int> getMRCAclustersRcpp(
+    const IntegerVector & parentNumVec,
+    const List & childrenNumList,
+    const List & descendedTipsList,
+    const IntegerVector & subtreeIndexVec,
+    const StringVector & vertexRegionVec,
+    const StringVector & tipNamesVec,
+    int subtreeRootNum,
+    const NumericMatrix & distTipsAncestorsMatrix,
     int subtreeIndex,
     int numTips,
     std::string regionLabel,
@@ -155,16 +155,17 @@ std::unordered_map<std::string, uint> getMRCAclustersRcpp(
   // std::vector<std::vector<std::string>> clusterList ;
   // for (uint i = 0; i < 45000; i++) {
   bool incrementNodesToCheckFlag = TRUE ;
-  uint nodeNumber = 0 ;
-  std::vector<uint> nodesToCheck ;
+  int nodeNumber = 0 ;
+  std::vector<int> nodesToCheck ;
   nodesToCheck.push_back(subtreeRootNum - 1) ;
-  std::unordered_map<std::string, uint> clusMemIndices ;
+  std::unordered_map<std::string, int> clusMemIndices ;
   for (uint i = 0; i < tipNamesVec.size(); i++) {
     if ((subtreeIndexVec.at(i) == subtreeIndex) & (vertexRegionVec.at(i) == regionLabel)) {
-      clusMemIndices[Rcpp::as<std::string>(tipNamesVec.at(i))] = 0 ;
+      std::string mapKey = Rcpp::as<std::string>(tipNamesVec.at(i)) ;
+      clusMemIndices[mapKey] = int(0) ;
     }
   }
-  uint clusterNumber = 1 ;
+  int clusterNumber = 1 ;
   do {
     incrementNodesToCheckFlag = TRUE ;
     nodeNumber = nodesToCheck.back() ;
@@ -181,19 +182,21 @@ std::unordered_map<std::string, uint> getMRCAclustersRcpp(
         if (Rcpp::as<NumericVector>(descendedTipsList[nodeNumber]).size() > 1) {
           bool checkValue = TRUE;
           for (uint i = 0; i < Rcpp::as<NumericVector>(descendedTipsList[nodeNumber]).size(); i++) {
-            checkValue = distTipsAncestorsMatrix(Rcpp::as<NumericVector>(descendedTipsList[nodeNumber])[i] - 1, nodeNumber - numTips) < distLimit ;
+            checkValue = distTipsAncestorsMatrix(Rcpp::as<IntegerVector>(descendedTipsList[nodeNumber])[i] - 1, nodeNumber - numTips) < distLimit ;
             if (!checkValue) break ;
           }
           if (checkValue) {
             for (uint i = 0; i < Rcpp::as<NumericVector>(descendedTipsList[nodeNumber]).size(); i++) {
-              clusMemIndices[Rcpp::as<std::string>(tipNamesVec(Rcpp::as<NumericVector>(descendedTipsList[nodeNumber])[i] - 1))] = clusterNumber ;
+              std::string mapKey = Rcpp::as<std::string>(tipNamesVec(Rcpp::as<IntegerVector>(descendedTipsList[nodeNumber])[i] - 1)) ;
+              clusMemIndices[mapKey] = clusterNumber ;
             }
             clusterNumber += 1 ;
             incrementNodesToCheckFlag = false ; // Cluster has been found: stop exploring that section of the tree.
           }
         } else if (Rcpp::as<NumericVector>(descendedTipsList[nodeNumber]).size() == 1) {
           // It is automatically a singleton that should be added...
-          clusMemIndices[Rcpp::as<std::string>(tipNamesVec.at(Rcpp::as<NumericVector>(descendedTipsList[nodeNumber])[0] - 1))] = clusterNumber;
+          std::string mapKey = Rcpp::as<std::string>(tipNamesVec.at(Rcpp::as<IntegerVector>(descendedTipsList[nodeNumber])[0] - 1)) ;
+          clusMemIndices[mapKey] = clusterNumber;
           clusterNumber += 1 ;
           incrementNodesToCheckFlag = false ;
         } // descendedTipsListStd[nodeNumber] can have size 0
@@ -202,11 +205,11 @@ std::unordered_map<std::string, uint> getMRCAclustersRcpp(
     if (incrementNodesToCheckFlag) {
       bool keepChildTest ;
 
-      for (uint i = 0; i < Rcpp::as<NumericVector>(childrenNumList[nodeNumber]).size(); i++) {
-        uint childSubtree = subtreeIndexVec(Rcpp::as<NumericVector>(childrenNumList[nodeNumber])[i] - 1) ;
+      for (uint i = 0; i < Rcpp::as<IntegerVector>(childrenNumList[nodeNumber]).size(); i++) {
+        int childSubtree = subtreeIndexVec(Rcpp::as<IntegerVector>(childrenNumList[nodeNumber])[i] - 1) ;
         keepChildTest = (childSubtree == subtreeIndex) ;
         if (keepChildTest) {
-          nodesToCheck.push_back(Rcpp::as<NumericVector>(childrenNumList[nodeNumber])[i] - 1) ;
+          nodesToCheck.push_back(Rcpp::as<IntegerVector>(childrenNumList[nodeNumber])[i] - 1) ;
         }
       }
     }
@@ -352,15 +355,15 @@ std::unordered_map<std::string, uint> getMRCAclustersRcpp(
 // [[Rcpp::export]]
 
 List simulateNodeTimesRcpp(
-    uint numTips,
-    NumericVector & baseRatePerIntroduction,
-    IntegerVector & orderedVertices,
-    IntegerVector & subtreeIndexVec,
-    NumericVector & tipTimes,
-    IntegerMatrix & edgeMatrix,
-    List & childrenNumList,
-    IntegerVector & branchMatchIndexVec,
-    IntegerVector & parentNumVec) {
+    int numTips,
+    const NumericVector & baseRatePerIntroduction,
+    const IntegerVector & orderedVertices,
+    const IntegerVector & subtreeIndexVec,
+    const NumericVector & tipTimes,
+    const IntegerMatrix & edgeMatrix,
+    const List & childrenNumList,
+    const IntegerVector & branchMatchIndexVec,
+    const IntegerVector & parentNumVec) {
   std::vector<double> vertexTimes(subtreeIndexVec.size()) ;
   for (uint i = 0; i < tipTimes.size(); i++) {
     vertexTimes[i] = tipTimes(i) ;
@@ -368,16 +371,18 @@ List simulateNodeTimesRcpp(
 
   for (auto & nodeNum : orderedVertices) {
     if (nodeNum <= numTips) continue ;
-    uint subtreeForMerge = subtreeIndexVec(nodeNum - 1) ; // -1 will have to be applied for indexing
-    arma::vec childrenTimes(Rcpp::as<NumericVector>(childrenNumList[nodeNum - 1]).size()) ;
+    int subtreeForMerge = subtreeIndexVec(nodeNum - 1) ; // -1 will have to be applied for indexing
+    int elementSize = Rcpp::as<IntegerVector>(childrenNumList[nodeNum - 1]).size() ;
+    arma::vec childrenTimes(elementSize) ;
     for (uint j = 0; j < childrenTimes.size(); j++) {
-      childrenTimes.at(j) = vertexTimes[Rcpp::as<NumericVector>(childrenNumList[nodeNum - 1])[j] - 1];
+      childrenTimes.at(j) = vertexTimes[Rcpp::as<IntegerVector>(childrenNumList[nodeNum - 1])[j] - 1];
     }
 
-    arma::vec minChildrenTimes(1) ; // The odd setup here is due to arma::randg returning a vector.
-    minChildrenTimes(0) = min(childrenTimes) ;
-    arma::vec vecWithTimeValue = minChildrenTimes - arma::randg(1, arma::distr_param(double(1), baseRatePerIntroduction(subtreeForMerge - 1))) ;
-    vertexTimes[nodeNum - 1] = vecWithTimeValue(0) ;
+    double minChildrenTimes = min(childrenTimes) ;
+    double coalRate = baseRatePerIntroduction(subtreeForMerge - 1) ;
+    NumericVector expValue = Rcpp::rexp(1, coalRate) ;
+    double vecWithTimeValue = minChildrenTimes - expValue(0);
+    vertexTimes[nodeNum - 1] = vecWithTimeValue ;
   }
 
   std::vector<double> edgeLengths(subtreeIndexVec.size() - 1) ;
@@ -400,18 +405,18 @@ List simulateNodeTimesRcpp(
   return List::create(Named("vertexTimes") = Rcpp::wrap(nodeTimes), Named("edgeLengths") = Rcpp::wrap(edgeLengths), Named("distTipsAncestorsMatrix") = distTipsAncestors) ;
 }
 
-arma::sp_umat getCoclusterMat(IntegerVector & clusMemVec) {
-  arma::uvec uniqueValues = arma::unique(Rcpp::as<arma::uvec>(clusMemVec)) ;
+arma::sp_imat getCoclusterMat(const IntegerVector & clusMemVec) {
+  arma::ivec uniqueValues = arma::unique(Rcpp::as<arma::ivec>(clusMemVec)) ;
   arma::umat locations = arma::umat(2, clusMemVec.size()) ;
   for (uint colIndex = 0; colIndex < locations.n_cols; colIndex++) {
     locations.at(0, colIndex) = locations.at(1, colIndex) = colIndex ;
   }
   arma::uvec indices ;
   for (auto & clusNum : uniqueValues) {
-    indices = arma::find(Rcpp::as<arma::uvec>(clusMemVec) == clusNum) ;
+    indices = arma::find(Rcpp::as<arma::ivec>(clusMemVec) == clusNum) ;
     int numCols = int(indices.size() * (indices.size() - 1) / 2) ;
     arma::umat matToMerge(2, numCols) ;
-    uint matToMergeCol = 0 ;
+    int matToMergeCol = 0 ;
     for (uint i = 0; i < indices.size() - 1; i++) {
       for (uint j = i + 1; j < indices.size(); j++) {
         matToMerge.at(0, matToMergeCol) = indices.at(j) ;
@@ -421,14 +426,14 @@ arma::sp_umat getCoclusterMat(IntegerVector & clusMemVec) {
     }
     locations = arma::join_rows(locations, matToMerge) ;
   }
-  return arma::sp_umat(locations, arma::uvec(locations.n_cols, arma::fill::ones)) ;
+  return arma::sp_imat(locations, arma::ivec(locations.n_cols, arma::fill::ones)) ;
 }
 
 // [[Rcpp::export]]
 
-arma::sp_umat getSumMatRcpp(List & clusMemVecList) {
+arma::sp_imat getSumMatRcpp(const List & clusMemVecList) {
   IntegerVector vecToTransform = Rcpp::as<IntegerVector>(clusMemVecList.at(0)) ;
-  arma::sp_umat resultMatrix = getCoclusterMat(vecToTransform) ;
+  arma::sp_imat resultMatrix = getCoclusterMat(vecToTransform) ;
   for (uint i = 1; i < clusMemVecList.size(); i++) {
     vecToTransform = Rcpp::as<IntegerVector>(clusMemVecList.at(i)) ;
     resultMatrix += getCoclusterMat(vecToTransform) ;
@@ -438,12 +443,12 @@ arma::sp_umat getSumMatRcpp(List & clusMemVecList) {
 
 // [[Rcpp::export]]
 
-std::unordered_map<int, double> summariseClusSizeDistsRcpp(List & clusMemVecList) {
-  arma::uvec sampleVec = Rcpp::as<arma::uvec>(clusMemVecList.at(0)) ;
+std::unordered_map<int, double> summariseClusSizeDistsRcpp(const List & clusMemVecList) {
+  arma::ivec sampleVec = Rcpp::as<arma::ivec>(clusMemVecList.at(0)) ;
   std::unordered_map<int, double> freqVec ;
 
   for (uint i = 0; i < clusMemVecList.size(); i++) {
-    sampleVec = Rcpp::as<arma::uvec>(clusMemVecList.at(i)) ;
+    sampleVec = Rcpp::as<arma::ivec>(clusMemVecList.at(i)) ;
     arma::uvec clusSizes = arma::hist(sampleVec, unique(sampleVec)) ;
     for (auto & clusSize : clusSizes) {
       double incrementValue = 1/double(clusSizes.size() * clusMemVecList.size()) ;
