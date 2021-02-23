@@ -442,7 +442,7 @@ computeLogSum <- function(logValues) {
   verticesInTreeOrdered <- verticesInTree[nodeOrder]
   incrementValues <- sapply(verticesInTreeOrdered, function(vertexNum) {
     if (vertexNum %in% subtreeTips) return(1)
-    -length(phyloAndTransTree$childrenNumList[[vertexNum]])
+    1 - length(phyloAndTransTree$childrenNumList[[vertexNum]])
   })
   timeIntervals <- abs(diff(vertexTimesToKeepOrdered))
 
