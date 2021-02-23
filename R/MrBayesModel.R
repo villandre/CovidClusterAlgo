@@ -137,6 +137,9 @@ clusterFromMrBayesOutput <- function(seqsTimestampsPOSIXct, seqsRegionStamps, Mr
 
   clusMembershipVecList <- .simulateClusMembership(phyloList = treeSampleList, targetRegion = clusterRegion, rootRegion = rootRegion, timestamps = seqsTimestampsPOSIXct, regionStamps = seqsRegionStamps, clockRate = perSiteClockRate, covidCluster.control = control)
   output <- produceClusters(clusMembershipVecList, control = control)
+  if (control$saveArgs) {
+    output$args <- mget(names(formals()))
+  }
   output$introSizeFreqTables <- clusMembershipVecList$introSizeFreqTables
   output$clusSizeDist <- clusMembershipVecList$clusSizeDist
   output$numTrees <- clusMembershipVecList$numTrees
