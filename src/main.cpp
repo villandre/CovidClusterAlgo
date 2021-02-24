@@ -380,9 +380,8 @@ List simulateNodeTimesRcpp(
 
     double minChildrenTimes = min(childrenTimes) ;
     double coalRate = baseRatePerIntroduction(subtreeForMerge - 1) ;
-    NumericVector expValue = Rcpp::rexp(1, coalRate) ;
-    double vecWithTimeValue = minChildrenTimes - expValue(0);
-    vertexTimes[nodeNum - 1] = vecWithTimeValue ;
+    double expValue = R::rexp(1 / coalRate) ;
+    vertexTimes[nodeNum - 1] = minChildrenTimes - expValue ;
   }
 
   std::vector<double> edgeLengths(subtreeIndexVec.size() - 1) ;
