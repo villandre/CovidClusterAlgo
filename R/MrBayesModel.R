@@ -107,8 +107,8 @@ covidCluster <- function(
   output
 }
 
-gen.covidCluster.control <- function(lengthForNullExtBranchesInPhylo = 1e-8, numReplicatesForNodeTimes = 500, numReplicatesForCoalRates = 500,  numThreads = 1, clusterCriterion = c("mrca", "cophenetic"), skipMrBayes = FALSE, MrBayesOutputThinningRate = 1, hclustMethod = "single", linkageRequirement = 0.90, saveArgs = FALSE, logLambdaPriorSD = log(2)/2) {
-  list(lengthForNullExtBranchesInPhylo = lengthForNullExtBranchesInPhylo, numReplicatesForNodeTimes = numReplicatesForNodeTimes,  numReplicatesForCoalRates = numReplicatesForCoalRates, numThreads = numThreads, clusterCriterion = clusterCriterion[[1]], skipMrBayes = skipMrBayes, MrBayesOutputThinningRate = MrBayesOutputThinningRate, hclustMethod = hclustMethod, linkageRequirement = linkageRequirement, saveArgs = saveArgs, logLambdaPriorSD = logLambdaPriorSD)
+gen.covidCluster.control <- function(lengthForNullExtBranchesInPhylo = 1e-8, numReplicatesForNodeTimes = 500, numReplicatesForCoalRates = 500,  numThreads = 1, clusterCriterion = c("mrca", "cophenetic"), skipMrBayes = FALSE, MrBayesOutputThinningRate = 1, hclustMethod = "single", linkageRequirement = 0.90, saveArgs = FALSE, logLambdaPriorSD = log(2)/2, RNGseed = 10L) {
+  list(lengthForNullExtBranchesInPhylo = lengthForNullExtBranchesInPhylo, numReplicatesForNodeTimes = numReplicatesForNodeTimes,  numReplicatesForCoalRates = numReplicatesForCoalRates, numThreads = numThreads, clusterCriterion = clusterCriterion[[1]], skipMrBayes = skipMrBayes, MrBayesOutputThinningRate = MrBayesOutputThinningRate, hclustMethod = hclustMethod, linkageRequirement = linkageRequirement, saveArgs = saveArgs, logLambdaPriorSD = logLambdaPriorSD, RNGseed = RNGseed)
 }
 
 clusterFromMrBayesOutput <- function(seqsTimestampsPOSIXct, seqsRegionStamps, MrBayesTreesFilename, MrBayesParametersFilename = NULL, clusterRegion, rootRegion, clusterCriterion, burninFraction = 0.5, linkageRequirement = 0.5, distLimit, perSiteClockRate, control = gen.covidCluster.control()) {
@@ -185,12 +185,14 @@ gen.priors.control <- function() {
   if (covidCluster.control$numThreads > 1) {
     cat("Simulating transmission trees... ")
     cl <- parallel::makePSOCKcluster(covidCluster.control$numThreads)
+    parallel::clusterSetRNGStream(cl = cl, iseed = covidCluster.control$RNGseed)
     clusMembershipCondOnPhylo <- parallel::parLapply(cl = cl, X = phyloList, fun = .simulateClustersFromStartingTree, timestampsInDays = timestampsInDays, regionStamps = regionStamps, logClockRatePriorMean = log(clockRate), targetRegion = targetRegion, rootRegion = rootRegion, control = covidCluster.control)
     cat("Done \n")
     parallel::stopCluster(cl)
   } else {
     cat("Simulating transmission trees... ")
   # clusMembershipCondOnPhylo <- lapply(phyloList, FUN = function(listElement) tryCatch(expr = .simulateClustersFromStartingTree(phylogeny = listElement, timestampsInDays = timestampsInDays, regionStamps = regionStamps, logClockRatePriorMean = log(clockRate), targetRegion = targetRegion, control = covidCluster.control), error = function(e) e))
+    set.seed(covidCluster.control$RNGseed)
     clusMembershipCondOnPhylo <- lapply(phyloList, FUN = .simulateClustersFromStartingTree, timestampsInDays = timestampsInDays, regionStamps = regionStamps, logClockRatePriorMean = log(clockRate), targetRegion = targetRegion, rootRegion = rootRegion, control = covidCluster.control)
   cat("Done \n")
   }

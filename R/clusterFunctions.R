@@ -82,7 +82,12 @@ phylo <- function(edge, edge.length, tip.label, node.label = NULL) {
     if (length(phyloAndTransTree$node.label[[vertexNum - numTips]]$region) == 1) next
     childrenNums <- phyloAndTransTree$childrenNumList[[vertexNum]]
     childrenEdgeLengths <- sapply(phyloAndTransTree$edge.length[phyloAndTransTree$branchMatchIndex[childrenNums]], "[[", "phylogeny")
-    selectedChild <- childrenNums[[which.min(childrenEdgeLengths)]]
+    minEdgeLength <- min(childrenEdgeLengths)
+    childrenCorrespondingToMin <- childrenNums[which(childrenEdgeLengths == minEdgeLength)]
+    selectedChild <- childrenCorrespondingToMin
+    if (length(childrenCorrespondingToMin) > 1) {
+      selectedChild <- sample(childrenCorrespondingToMin, size = 1)
+    }
     selectedRegion <- NULL
     if (selectedChild <= numTips) {
       selectedRegion <- phyloAndTransTree$tip.label[[selectedChild]]$region
