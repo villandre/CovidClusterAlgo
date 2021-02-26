@@ -434,21 +434,15 @@ computeLogSum <- function(logValues) {
     childrenTimes <- currentTime + sapply(phyloAndTransTree$edge.length[phyloAndTransTree$branchMatchIndex[childrenNums]], "[[", "phylogeny")/exp(sapply(phyloAndTransTree$edge.length[phyloAndTransTree$branchMatchIndex[childrenNums]], "[[", "logXi"))
     vertexTimes[childrenNums] <- childrenTimes
   }
-  verticesInTree <- which(vertexTimes > 0)
-  vertexTimesToKeep <- vertexTimes[verticesInTree]
-  subtreeTips <- setdiff(verticesInTree, nodeIndicesInSubtree)
-  nodeOrder <- order(vertexTimesToKeep, decreasing = T)
-  vertexTimesToKeepOrdered <- vertexTimesToKeep[nodeOrder]
-  verticesInTreeOrdered <- verticesInTree[nodeOrder]
-  incrementValues <- sapply(verticesInTreeOrdered, function(vertexNum) {
-    if (vertexNum %in% subtreeTips) return(1)
-    1 - length(phyloAndTransTree$childrenNumList[[vertexNum]])
-  })
-  timeIntervals <- abs(diff(vertexTimesToKeepOrdered))
 
-  numLineages <- head(cumsum(incrementValues), n = -1)
-  numPairs <- choose(numLineages, 2)
-  sum(incrementValues < 0)/sum(numPairs * timeIntervals)
+  timeRanges <- sapply(nodeIndicesInSubtree, function(nodeNum) {
+    childrenNums <- phyloAndTransTree$childrenNumList[[nodeNum]]
+    currentTime <- vertexTimes[[nodeNum]]
+    childrenTimes <- vertexTimes[childrenNums]
+    min(abs(childrenTimes - currentTime))
+  })
+
+  1/sum(timeRanges)
 }
 
 .computeCoalRateSubtree <- function(phyloAndTransTree, subtreeIndex) {
