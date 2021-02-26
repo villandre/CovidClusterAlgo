@@ -442,7 +442,7 @@ computeLogSum <- function(logValues) {
     min(abs(childrenTimes - currentTime))
   })
 
-  1/sum(timeRanges)
+  length(timeRanges)/sum(timeRanges)
 }
 
 .computeCoalRateSubtree <- function(phyloAndTransTree, subtreeIndex) {
