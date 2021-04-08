@@ -35,18 +35,21 @@
 
 covidCluster <- function(
   DNAbinData,
+  MLtree = FALSE,
   outgroup,
   clusterRegion = NULL,
   rootRegion = NULL,
   covariateFrame = NULL,
   seqsTimestampsPOSIXct = NULL,
-  folderForMrBayesFiles = NULL,
+  folderForTreeEstFiles = NULL,
   seqsRegionStamps = rep(1, ifelse(is.matrix(DNAbinData), nrow(DNAbinData), length(DNAbinData))),
   perSiteClockRate = NULL,
   clusteringCriterion = c("mrca", "cophenetic", "consecutive"),
   distLimit = NULL,
+  raxmlExecWithPath = "/home/luc/standard-RAxML/raxmlHPC-PTHREADS-AVX2",
   control = list(),
   MrBayes.control = gen.MrBayes.control(),
+  RAxML.control = gen.RAxML.control(),
   priors.control = gen.priors.control()) {
   clusteringCriterion <- clusteringCriterion[[1]]
   outgroupPos <- match(outgroup, rownames(DNAbinData))
@@ -61,37 +64,44 @@ covidCluster <- function(
   control$distLimit <- distLimit
   control$clusterRegion <- clusterRegion
   MrBayes.control <- do.call("gen.MrBayes.control", MrBayes.control)
+  RAxML.control <- do.call("gen.RAxML.control", RAxML.control)
   priors.control <- do.call("gen.priors.control", priors.control)
-  nexusFilename <- "mrbayesData.nex"
-  nexusFilenameWithFolder <- paste(folderForMrBayesFiles, nexusFilename, sep = "/")
+  treeSampleList <- NULL
+  if (!MLtree) {
+    # We call MrBayes
+    nexusFilename <- "mrbayesData.nex"
+    nexusFilenameWithFolder <- paste(folderForTreeEstFiles, nexusFilename, sep = "/")
+    if (!control$skipTreeEstimation) {
+      # We write necessary files to disk
+      scriptFilenameWithFolder <- .writeMrBayesFiles(DNAbinData, nexusFilename, folderForTreeEstFiles, outgroup, MrBayes.control)
 
-  # We call MrBayes
-  if (!control$skipMrBayes) {
-    # We write necessary files to disk
-    scriptFilenameWithFolder <- .writeMrBayesFiles(DNAbinData, nexusFilename, folderForMrBayesFiles, outgroup, MrBayes.control)
-
-    commandForSystem2 <- MrBayes.control$MrBayesShellCommand
-    argsForSystem2 <- scriptFilenameWithFolder
-    if (MrBayes.control$MPIenabled) {
-      commandForSystem2 <- "mpirun"
-      argsForSystem2 <- c(paste("-n", control$numThreads), paste(MrBayes.control$MrBayesShellCommand, scriptFilenameWithFolder))
+      commandForSystem2 <- MrBayes.control$MrBayesShellCommand
+      argsForSystem2 <- scriptFilenameWithFolder
+      if (MrBayes.control$MPIenabled) {
+        commandForSystem2 <- "mpirun"
+        argsForSystem2 <- c(paste("-n", control$numThreads), paste(MrBayes.control$MrBayesShellCommand, scriptFilenameWithFolder))
+      }
+      system2(command = commandForSystem2, args = argsForSystem2)
     }
-
-    system2(command = commandForSystem2, args = argsForSystem2)
+    MrBayesOutputFilenamePrefix <- paste(nexusFilenameWithFolder, ".run1", sep = "")
+    # We read in the tree samples and parameter files
+    treeSampleFile <- paste(MrBayesOutputFilenamePrefix, ".t", sep = "")
+    treeSample <- ape::read.nexus(treeSampleFile)
+    numItersToDrop <- ceiling(MrBayes.control$burninfrac * length(treeSample))
+    itersToKeep <- seq(from = numItersToDrop + 1, to = length(treeSample), by = ceiling(1/control$MrBayesOutputThinningRate))
+    treeSample <- treeSample[itersToKeep]
+    treeSampleList <- lapply(seq_along(treeSample), function(index) treeSample[[index]])
+    rm(treeSample)
+    gc() # Tree sample can be huge. Better to call gc explicitly
+    # We also read in associated parameter values...
+  } else {
+    if (!control$skipTreeEstimation) {
+    treeSampleList <- list(obtainMLtreeRAxML(alignment = DNAbinData, raxmlCommand = raxmlExecWithPath, directory = folderForTreeEstFiles, outgroupName = outgroup, control = RAxML.control))
+    } else {
+      treeSampleFile <- list.files(path = folderForTreeEstFiles, pattern = "result.optimizedBranches", full.names = TRUE)
+      treeSampleList <- list(ape::read.tree(treeSampleFile))
+    }
   }
-  MrBayesOutputFilenamePrefix <- paste(nexusFilenameWithFolder, ".run1", sep = "")
-
-  # We read in the tree samples and parameter files
-  treeSampleFile <- paste(MrBayesOutputFilenamePrefix, ".t", sep = "")
-
-  treeSample <- ape::read.nexus(treeSampleFile)
-  numItersToDrop <- ceiling(MrBayes.control$burninfrac * length(treeSample))
-  itersToKeep <- seq(from = numItersToDrop + 1, to = length(treeSample), by = ceiling(1/control$MrBayesOutputThinningRate))
-  treeSample <- treeSample[itersToKeep]
-  treeSampleList <- lapply(seq_along(treeSample), function(index) treeSample[[index]])
-  rm(treeSample)
-  gc() # Tree sample can be huge. Better to call gc explicitly
-  # We also read in associated parameter values...
 
   # parameterValuesFile <- paste(MrBayesOutputFilenamePrefix, ".p", sep = "")
   # parameterValues <- .formatParameterFiles(parameterValuesFile, itersToKeep = itersToKeep, control = MrBayes.control)
@@ -107,8 +117,8 @@ covidCluster <- function(
   output
 }
 
-gen.covidCluster.control <- function(lengthForNullExtBranchesInPhylo = 1e-8, numReplicatesForNodeTimes = 500, numReplicatesForCoalRates = 500,  numThreads = 1, clusterCriterion = c("mrca", "cophenetic"), skipMrBayes = FALSE, MrBayesOutputThinningRate = 1, hclustMethod = "single", linkageRequirement = 0.90, saveArgs = FALSE, logLambdaPriorSD = log(2)/2, RNGseed = 10L) {
-  list(lengthForNullExtBranchesInPhylo = lengthForNullExtBranchesInPhylo, numReplicatesForNodeTimes = numReplicatesForNodeTimes,  numReplicatesForCoalRates = numReplicatesForCoalRates, numThreads = numThreads, clusterCriterion = clusterCriterion[[1]], skipMrBayes = skipMrBayes, MrBayesOutputThinningRate = MrBayesOutputThinningRate, hclustMethod = hclustMethod, linkageRequirement = linkageRequirement, saveArgs = saveArgs, logLambdaPriorSD = logLambdaPriorSD, RNGseed = RNGseed)
+gen.covidCluster.control <- function(lengthForNullExtBranchesInPhylo = 1e-8, numReplicatesForNodeTimes = 500, numReplicatesForCoalRates = 500,  numThreads = 1, clusterCriterion = c("mrca", "cophenetic"), skipTreeEstimation = FALSE, MrBayesOutputThinningRate = 1, hclustMethod = "single", linkageRequirement = 0.90, saveArgs = FALSE, logLambdaPriorSD = log(2)/2, RNGseed = 10L) {
+  list(lengthForNullExtBranchesInPhylo = lengthForNullExtBranchesInPhylo, numReplicatesForNodeTimes = numReplicatesForNodeTimes,  numReplicatesForCoalRates = numReplicatesForCoalRates, numThreads = numThreads, clusterCriterion = clusterCriterion[[1]], skipTreeEstimation = skipTreeEstimation, MrBayesOutputThinningRate = MrBayesOutputThinningRate, hclustMethod = hclustMethod, linkageRequirement = linkageRequirement, saveArgs = saveArgs, logLambdaPriorSD = logLambdaPriorSD, RNGseed = RNGseed)
 }
 
 clusterFromMrBayesOutput <- function(seqsTimestampsPOSIXct, seqsRegionStamps, MrBayesTreesFilename, MrBayesParametersFilename = NULL, clusterRegion, rootRegion, clusterCriterion, burninFraction = 0.5, linkageRequirement = 0.5, distLimit, perSiteClockRate, control = gen.covidCluster.control()) {
@@ -172,6 +182,10 @@ gen.MrBayes.control <- function(MrBayesShellCommand = "mb", nst = 6L, rates = "i
   list(MrBayesShellCommand = MrBayesShellCommand, nst = nst, rates = rates, ngammacat = ngammacat, nruns = nruns, nchains = nchains, ngen = ngen, samplefreq = samplefreq, diagnfreq = diagnfreq, printfreq = printfreq, burninfrac = burninfrac, beaglesse = beaglesse, usebeagle = usebeagle, beaglescaling = beaglescaling, seed = seed, swapseed = swapseed, MPIenabled = MPIenabled, append = append, temp = temp)
 }
 
+gen.RAxML.control <- function(numRateCats = 4, numThreads = 4, seedForBS = 42, seedForParsemony = 24) {
+  list(numRateCats = numRateCats, numThreads = numThreads, seedForBS = seedForBS, seedForParsemony = seedForParsemony)
+}
+
 gen.priors.control <- function() {
  list()
 }
@@ -210,12 +224,12 @@ gen.priors.control <- function() {
     numTrees = length(combinedVecs))
 }
 
-.writeMrBayesFiles <- function(DNAbinData, nexusFilename, folderForMrBayesFiles, outgroup, control) {
-  nexusFilenameWithFolder <- paste(folderForMrBayesFiles, nexusFilename, sep = "/")
+.writeMrBayesFiles <- function(DNAbinData, nexusFilename, folderForTreeEstFiles, outgroup, control) {
+  nexusFilenameWithFolder <- paste(folderForTreeEstFiles, nexusFilename, sep = "/")
   scriptForMrBayes <- .produceMrBayesScript(outgroup = outgroup, nexusDataFilename = nexusFilenameWithFolder, control = control)
 
   ape::write.nexus.data(x = DNAbinData, file = nexusFilenameWithFolder)
-  scriptFilenameWithFolder <- paste(folderForMrBayesFiles, "MrBayesScript.nex", sep = "/")
+  scriptFilenameWithFolder <- paste(folderForTreeEstFiles, "MrBayesScript.nex", sep = "/")
   fileConn <- file(scriptFilenameWithFolder)
   writeLines(scriptForMrBayes, fileConn)
   close(fileConn)
@@ -667,3 +681,26 @@ reorder_cormat <- function(sparseCormat, method) {
   objectToReturn <- do.call("c", envirAsVec)
   objectToReturn[order(as.numeric(names(objectToReturn)))]
 }
+
+obtainMLtreeRAxML <- function(alignment, raxmlCommand, directory, outgroupName, control)
+{
+  alignmentDigest <- digest::digest(alignment, algo = "md5", serialize = TRUE, file = FALSE, length = Inf, skip = "auto", ascii = FALSE, raw = FALSE)
+  subDirectory <- paste(directory, as.character(alignmentDigest), sep = "/")
+  system2(command = "mkdir", args = subDirectory)
+  filename <- paste(subDirectory, "/RAxML_alignedDNA.inter", sep = "")
+  ape::write.dna(x = alignment, file = filename, format = "interleaved")
+
+  raxml1args <- paste("-s", filename, "-f d -k -m GTRCAT -c", control$numRateCats, "-n covidTree -T", control$numThreads, "-U -p", control$seedForParsemony, "-o", outgroupName, "-w", subDirectory, sep = " ")
+  system2(command = raxmlCommand, args = raxml1args)
+
+  bestTreeFile <- list.files(subDirectory, pattern = "bestTree", full.names = TRUE)
+
+  raxml2args <- paste("-s", filename, "-f e -k -m GTRCAT -c", control$numRateCats, "-n optimizedBranches -T", control$numThreads, "-U -p", control$seedForParsemony, "-o", outgroupName, "-w", subDirectory, "-t", bestTreeFile, sep = " ")
+  system2(command = raxmlCommand, args = raxml2args)
+
+  RAxMLtree <- ape::read.tree(list.files(path = subDirectory, pattern = "result.optimizedBranches", full.names = TRUE))
+  # raxml3args <- paste("-s", filename, "-f d -k -m GTRCAT -c", numRateCats, "-n treeFromSim_Boot -T", numThreads, "-U -p", seedForParsemony, "-o", outgroupName, "-x", seedForBS, "-#", numBoot,"-w", subDirectory, sep = " ")
+  # system2(command = raxmlCommand, args = raxml3args)
+  RAxMLtree
+}
+
