@@ -200,12 +200,15 @@ gen.priors.control <- function() {
     cat("Simulating transmission trees... ")
     cl <- parallel::makePSOCKcluster(covidCluster.control$numThreads)
     parallel::clusterSetRNGStream(cl = cl, iseed = covidCluster.control$RNGseed)
-    clusMembershipCondOnPhylo <- parallel::parLapply(cl = cl, X = phyloList, fun = .simulateClustersFromStartingTree, timestampsInDays = timestampsInDays, regionStamps = regionStamps, logClockRatePriorMean = log(clockRate), targetRegion = targetRegion, rootRegion = rootRegion, control = covidCluster.control)
+    if (length(phyloList) > 1) {
+      clusMembershipCondOnPhylo <- parallel::parLapply(cl = cl, X = phyloList, fun = .simulateClustersFromStartingTree, timestampsInDays = timestampsInDays, regionStamps = regionStamps, logClockRatePriorMean = log(clockRate), targetRegion = targetRegion, rootRegion = rootRegion, control = covidCluster.control)
+    } else {
+      clusMembershipCondOnPhylo <- list(.simulateClustersFromStartingTree(phylogeny = phyloList[[1]], timestampsInDays = timestampsInDays, regionStamps = regionStamps, logClockRatePriorMean = log(clockRate), targetRegion = targetRegion, rootRegion = rootRegion, control = covidCluster.control, cl = cl))
+    }
     cat("Done \n")
     parallel::stopCluster(cl)
   } else {
     cat("Simulating transmission trees... ")
-  # clusMembershipCondOnPhylo <- lapply(phyloList, FUN = function(listElement) tryCatch(expr = .simulateClustersFromStartingTree(phylogeny = listElement, timestampsInDays = timestampsInDays, regionStamps = regionStamps, logClockRatePriorMean = log(clockRate), targetRegion = targetRegion, control = covidCluster.control), error = function(e) e))
     set.seed(covidCluster.control$RNGseed)
     clusMembershipCondOnPhylo <- lapply(phyloList, FUN = .simulateClustersFromStartingTree, timestampsInDays = timestampsInDays, regionStamps = regionStamps, logClockRatePriorMean = log(clockRate), targetRegion = targetRegion, rootRegion = rootRegion, control = covidCluster.control)
   cat("Done \n")
@@ -251,7 +254,7 @@ gen.priors.control <- function() {
 
 # subtreeClusterFun is a function that takes a phyloAndTransTree object and a region index and produces a vector of cluster membership indices.
 
-.simulateClustersFromStartingTree <- function(phylogeny,  timestampsInDays, regionStamps, logClockRatePriorMean, targetRegion, rootRegion, control) {
+.simulateClustersFromStartingTree <- function(phylogeny, timestampsInDays, regionStamps, logClockRatePriorMean, targetRegion, rootRegion, cl = NULL, control) {
 
   phyloAndTransTree <- .genStartPhyloAndTransTree(phylogeny = phylogeny, timestampsInDays = timestampsInDays, regionStamps = regionStamps, logClockRatePriorMean = logClockRatePriorMean, targetRegion = targetRegion, rootRegion = rootRegion, control = control)
 
@@ -330,7 +333,12 @@ gen.priors.control <- function() {
     introSize
   }
   introSizes <- sapply(seq_along(phyloAndTransTree$LambdaList), funToGetIntroSize)
- list(clusVectors = do.call("c", replicate(n = control$numReplicatesForNodeTimes, funToReplicate(phyloAndTransTree, control = control), simplify = FALSE)), introSizesDist = table(introSizes[introSizes != 0]))
+  if (is.null(cl)) {
+    finalOutput <- replicate(n = control$numReplicatesForNodeTimes, funToReplicate(phyloAndTransTree, control = control), simplify = FALSE)
+  } else {
+    finalOutput <- parallel::parLapply(cl = cl, X = 1:control$numReplicatesForNodeTimes, fun = function(x) funToReplicate(phyloAndTransTree, control = control))
+  }
+ list(clusVectors = do.call("c", finalOutput), introSizesDist = table(introSizes[introSizes != 0]))
 }
 
 .clusterIndicesFromAdjMat <- function(adjacencyMatrix) {
@@ -688,7 +696,11 @@ obtainMLtreeRAxML <- function(alignment, raxmlCommand, directory, outgroupName, 
   subDirectory <- paste(directory, as.character(alignmentDigest), sep = "/")
   system2(command = "mkdir", args = subDirectory)
   filename <- paste(subDirectory, "/RAxML_alignedDNA.inter", sep = "")
-  ape::write.dna(x = alignment, file = filename, format = "interleaved")
+  if (!file.exists(filename)) {
+    ape::write.dna(x = alignment, file = filename, format = "interleaved")
+  } else {
+    cat("File", filename, "already exists! It will not be updated. \n")
+  }
 
   raxml1args <- paste("-s", filename, "-f d -k -m GTRCAT -c", control$numRateCats, "-n covidTree -T", control$numThreads, "-U -p", control$seedForParsemony, "-o", outgroupName, "-w", subDirectory, sep = " ")
   system2(command = raxmlCommand, args = raxml1args)
